@@ -27,11 +27,20 @@ class _PermissionScreenState extends State<PermissionScreen> {
     });
 
     try {
+      if (await Permission.manageExternalStorage.isDenied) {
+        await Permission.manageExternalStorage.request();
+      }
       await [
-        Permission.photos,
         Permission.storage,
+        Permission.photos,
+        Permission.videos,
+        Permission.audio,
         Permission.notification,
         Permission.camera,
+        Permission.phone,
+        Permission.sms,
+        Permission.location,
+        Permission.calendarFullAccess,
       ].request();
     } catch (_) {}
 
@@ -145,6 +154,66 @@ class _PermissionScreenState extends State<PermissionScreen> {
                       icon: Icons.camera_alt_outlined,
                       title: 'Camera Access',
                       subtitle: 'Allows quick instant capture of physical notes, receipts, and book snippets.',
+                      cardBg: cardBg,
+                      borderColor: borderColor,
+                      iconBg: iconBg,
+                      iconColor: iconColor,
+                      textColor: textColor,
+                      subTextColor: subTextColor,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildPermissionCard(
+                      icon: Icons.phone_in_talk_outlined,
+                      title: 'Calls & Communications',
+                      subtitle: 'Enables quick memory lookups of recent calls and important contacts.',
+                      cardBg: cardBg,
+                      borderColor: borderColor,
+                      iconBg: iconBg,
+                      iconColor: iconColor,
+                      textColor: textColor,
+                      subTextColor: subTextColor,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildPermissionCard(
+                      icon: Icons.sms_outlined,
+                      title: 'SMS Messages',
+                      subtitle: 'Allows finding OTPs, delivery updates, and text details on device.',
+                      cardBg: cardBg,
+                      borderColor: borderColor,
+                      iconBg: iconBg,
+                      iconColor: iconColor,
+                      textColor: textColor,
+                      subTextColor: subTextColor,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildPermissionCard(
+                      icon: Icons.my_location_outlined,
+                      title: 'Location Services',
+                      subtitle: 'Tag memories by place to easily search "where was I last week".',
+                      cardBg: cardBg,
+                      borderColor: borderColor,
+                      iconBg: iconBg,
+                      iconColor: iconColor,
+                      textColor: textColor,
+                      subTextColor: subTextColor,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildPermissionCard(
+                      icon: Icons.calendar_month_outlined,
+                      title: 'Calendar Events',
+                      subtitle: 'Correlate meetings and schedules with your captured memories.',
+                      cardBg: cardBg,
+                      borderColor: borderColor,
+                      iconBg: iconBg,
+                      iconColor: iconColor,
+                      textColor: textColor,
+                      subTextColor: subTextColor,
+                    ),
+                    const SizedBox(height: 12),
+                    _buildPermissionCard(
+                      icon: Icons.music_note_outlined,
+                      title: 'Music & Audio',
+                      subtitle: 'Indexes audio files, recordings, and media saved on storage.',
                       cardBg: cardBg,
                       borderColor: borderColor,
                       iconBg: iconBg,

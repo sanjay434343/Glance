@@ -9,6 +9,10 @@ import '../native/glance_native_bridge.dart';
 import '../pipeline/content_pipeline.dart';
 import 'image_compression_service.dart';
 import 'vision_service.dart';
+import 'document_extraction_service.dart';
+import 'smart_entity_service.dart';
+import 'web_scraper_service.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 /// Scans real device activity, photos, screenshots, documents, clipboard, and web entries.
 class DeviceMemoryScanner {
@@ -87,6 +91,17 @@ class DeviceMemoryScanner {
           'usageTimeMs': usageTimeMs,
         });
 
+        // Always record persistent daily usage snapshot in app_usage_history table
+        final todayKey = "${DateTime.now().year}-${DateTime.now().month.toString().padLeft(2, '0')}-${DateTime.now().day.toString().padLeft(2, '0')}";
+        await db.upsertAppUsageHistory(
+          packageName: pkgName,
+          appName: appName,
+          dateKey: todayKey,
+          usageTimeMs: usageTimeMs,
+          openCount: openCount,
+          timestamp: ts,
+        );
+
         if (existingMemory != null) {
           // Only update SQLite if capturedAt timestamp or usage stats actually changed
           if (existingMemory.capturedAt != ts || existingMemory.summary != statsJson) {
@@ -155,10 +170,10 @@ class DeviceMemoryScanner {
         try {
           final path = (m['filePath'] as String? ?? '').trim();
           if (path.isEmpty || existingFilePaths.contains(path)) {
-            // If already in DB, auto-enqueue if vision hasn't run yet
+            // If already in DB, only auto-enqueue if vision has NEVER processed it
             if (path.isNotEmpty) {
               final existingMem = existingMemByPath[path];
-              if (existingMem != null && (!existingMem.isProcessed || !existingMem.content.contains('[Gemma Vision Intelligence]'))) {
+              if (existingMem != null && !existingMem.isProcessed) {
                 VisionService.instance.enqueue(
                   memoryId: existingMem.id,
                   imagePath: path,
@@ -195,9 +210,52 @@ class DeviceMemoryScanner {
         }
       }
 
-      // 3. Documents & Files
-      final docs = await GlanceNativeBridge.getRecentDocuments();
-      for (final doc in docs) {
+      // 3. Documents & Files (Automated scan via MediaStore, Downloads & Documents folders)
+      final allFoundDocs = <Map<String, dynamic>>[];
+      try {
+        final docs = await GlanceNativeBridge.getRecentDocuments();
+        allFoundDocs.addAll(docs);
+      } catch (e) {
+        debugPrint('[DeviceMemoryScanner] Bridge getRecentDocuments note: $e');
+      }
+
+      // Also directly scan /storage/emulated/0/Download and Documents folders in Dart
+      final downloadDirs = [
+        Directory('/storage/emulated/0/Download'),
+        Directory('/storage/emulated/0/Downloads'),
+        Directory('/storage/emulated/0/Documents'),
+      ];
+      final extensions = {'pdf', 'doc', 'docx', 'txt', 'md', 'epub', 'xlsx', 'xls', 'csv', 'pptx', 'ppt'};
+
+      for (final dir in downloadDirs) {
+        if (dir.existsSync()) {
+          try {
+            final entities = dir.listSync(recursive: false, followLinks: false);
+            for (final entity in entities) {
+              if (entity is File && !entity.path.split(Platform.pathSeparator).last.startsWith('.')) {
+                final ext = entity.path.contains('.') ? entity.path.split('.').last.toLowerCase() : '';
+                if (extensions.contains(ext)) {
+                  final path = entity.path;
+                  if (!allFoundDocs.any((d) => d['filePath'] == path)) {
+                    final filename = entity.uri.pathSegments.last;
+                    allFoundDocs.add({
+                      'filename': filename,
+                      'filePath': path,
+                      'fileType': ext,
+                      'sizeBytes': entity.lengthSync(),
+                      'modifiedAt': entity.lastModifiedSync().millisecondsSinceEpoch,
+                    });
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            debugPrint('[DeviceMemoryScanner] Dart folder scan note: $e');
+          }
+        }
+      }
+
+      for (final doc in allFoundDocs) {
         final path = (doc['filePath'] as String? ?? '').trim();
         if (path.isEmpty || _seenPaths.contains(path) || existingFilePaths.contains(path)) continue;
         _seenPaths.add(path);
@@ -231,6 +289,9 @@ class DeviceMemoryScanner {
         await db.insertMemory(updated);
         hasNewItem = true;
       }
+
+      // Automatically extract text and process all unindexed documents
+      unawaited(DocumentExtractionService.instance.processUnprocessedDocuments());
 
       // 4. Clipboard Text is no longer automatically scanned. User must manually tap Paste in Capture Screen.
 
@@ -381,6 +442,15 @@ class DeviceMemoryScanner {
         );
 
         final memory = await pipeline.processIngestion(item);
+        
+        // Extract and push smart entities into summary for RAG retrieval
+        String? notifSummary;
+        try {
+          notifSummary = await SmartEntityService.instance.extractAndBuildSummary(
+            '$displayTitle\n$text',
+          );
+        } catch (_) {}
+
         final updated = Memory(
           id: memory.id,
           type: 'notification',
@@ -389,6 +459,7 @@ class DeviceMemoryScanner {
           source: memory.source,
           sourceApp: appName,
           sourcePackage: pkgName,
+          summary: notifSummary,
           capturedAt: ts,
           createdAt: memory.createdAt,
           updatedAt: memory.updatedAt,
@@ -532,10 +603,30 @@ class DeviceMemoryScanner {
       if (text.isNotEmpty) {
         final classified = classifyInputText(text);
 
-        final type = classified['type']!;
-        final title = classified['title']!;
-        final url = classified['url']!;
-        final content = classified['content']!;
+        String type = classified['type']!;
+        String title = classified['title']!;
+        String url = classified['url']!;
+        String content = classified['content']!;
+        String? thumbnailPath;
+
+        // If it's a website URL, fetch hero thumbnail and scrape page content
+        if (type == 'url' || type == 'webpage') {
+          type = 'webpage';
+          try {
+            final scraped = await WebScraperService.instance.scrapeUrl(url.isNotEmpty ? url : text);
+            if (scraped['title'] != null && scraped['title'].toString().trim().isNotEmpty) {
+              title = scraped['title'].toString().trim();
+            }
+            if (scraped['content'] != null && scraped['content'].toString().trim().isNotEmpty) {
+              content = scraped['content'].toString().trim();
+            }
+            if (scraped['thumbnailPath'] != null) {
+              thumbnailPath = scraped['thumbnailPath'].toString();
+            }
+          } catch (e) {
+            debugPrint('[DeviceMemoryScanner] Scrape error: $e');
+          }
+        }
 
         final shaHash = Memory.computeShaHash(
           title: title,
@@ -547,7 +638,8 @@ class DeviceMemoryScanner {
         final hasSha = await db.hasMemoryWithShaHash(shaHash);
         final existingMemories = await db.getAllMemories();
         final isAlreadySaved = hasSha || existingMemories.any(
-          (m) => (m.type == type || m.type == 'copied_text') && m.content.trim() == content
+          (m) => (m.type == type || m.type == 'copied_text' || m.type == 'url') &&
+              (m.content.trim() == content || (url.isNotEmpty && m.url == url))
         );
 
         if (!isAlreadySaved) {
@@ -560,6 +652,15 @@ class DeviceMemoryScanner {
           );
 
           final memory = await pipeline.processIngestion(item);
+
+          // Extract and push smart entities into summary for RAG retrieval
+          String? clipSummary;
+          try {
+            clipSummary = await SmartEntityService.instance.extractAndBuildSummary(
+              content,
+            );
+          } catch (_) {}
+
           final updated = Memory(
             id: memory.id,
             type: type,
@@ -568,6 +669,8 @@ class DeviceMemoryScanner {
             source: memory.source,
             sourceApp: 'Clipboard',
             url: url.isNotEmpty ? url : null,
+            thumbnailPath: thumbnailPath,
+            summary: clipSummary,
             capturedAt: ts,
             createdAt: memory.createdAt,
             updatedAt: memory.updatedAt,
@@ -580,5 +683,115 @@ class DeviceMemoryScanner {
       debugPrint('recordClipboardText error: $e');
     }
     return false;
+  }
+
+  /// Dedicated scanner method to crawl, index, and extract all device documents and PDFs.
+  Future<int> scanAndIngestAllDocuments() async {
+    int importedCount = 0;
+    try {
+      // Ensure Manage External Storage permission is granted on Android 11+
+      try {
+        final isManageGranted = await Permission.manageExternalStorage.isGranted;
+        if (!isManageGranted) {
+          final status = await Permission.manageExternalStorage.request();
+          debugPrint('[DeviceMemoryScanner] manageExternalStorage request result: $status');
+        }
+        await [
+          Permission.storage,
+          Permission.photos,
+        ].request();
+      } catch (permErr) {
+        debugPrint('[DeviceMemoryScanner] Permission request note: $permErr');
+      }
+
+      final existingMemories = await db.getAllMemories();
+      final existingFilePaths = existingMemories
+          .where((m) => m.filePath != null && m.filePath!.isNotEmpty)
+          .map((m) => m.filePath!)
+          .toSet();
+
+      final docs = await GlanceNativeBridge.getRecentDocuments();
+      debugPrint('[DeviceMemoryScanner] Native bridge returned ${docs.length} documents.');
+
+      // Also directly scan /storage/emulated/0/Download and /storage/emulated/0/Documents in Dart as immediate fallback
+      final downloadDirs = [
+        Directory('/storage/emulated/0/Download'),
+        Directory('/storage/emulated/0/Downloads'),
+        Directory('/storage/emulated/0/Documents'),
+      ];
+
+      final extensions = {'pdf', 'doc', 'docx', 'txt', 'md', 'epub', 'xlsx', 'xls', 'csv', 'pptx', 'ppt'};
+      final allFoundDocs = List<Map<String, dynamic>>.from(docs);
+
+      for (final dir in downloadDirs) {
+        if (dir.existsSync()) {
+          try {
+            final entities = dir.listSync(recursive: false, followLinks: false);
+            for (final entity in entities) {
+              if (entity is File && !entity.path.split(Platform.pathSeparator).last.startsWith('.')) {
+                final ext = entity.path.contains('.') ? entity.path.split('.').last.toLowerCase() : '';
+                if (extensions.contains(ext)) {
+                  final path = entity.path;
+                  if (!allFoundDocs.any((d) => d['filePath'] == path)) {
+                    final filename = entity.uri.pathSegments.last;
+                    allFoundDocs.add({
+                      'filename': filename,
+                      'filePath': path,
+                      'fileType': ext,
+                      'sizeBytes': entity.lengthSync(),
+                      'modifiedAt': entity.lastModifiedSync().millisecondsSinceEpoch,
+                    });
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            debugPrint('[DeviceMemoryScanner] Dart scan note: $e');
+          }
+        }
+      }
+
+      for (final doc in allFoundDocs) {
+        final path = (doc['filePath'] as String? ?? '').trim();
+        if (path.isEmpty || existingFilePaths.contains(path)) continue;
+
+        existingFilePaths.add(path);
+        _seenPaths.add(path);
+
+        final filename = doc['filename'] as String? ?? 'Document';
+        final type = doc['fileType'] as String? ?? 'pdf';
+        final ts = doc['modifiedAt'] as int? ?? DateTime.now().millisecondsSinceEpoch;
+
+        final item = IngestionItem(
+          type: type.isNotEmpty ? type : 'pdf',
+          title: filename,
+          rawContent: 'Document $filename located at $path',
+          sourceApp: 'Files',
+          filePath: path,
+        );
+
+        final memory = await pipeline.processIngestion(item);
+        final updated = Memory(
+          id: memory.id,
+          type: memory.type,
+          title: memory.title,
+          content: memory.content,
+          source: memory.source,
+          sourceApp: 'Files',
+          filePath: path,
+          capturedAt: ts,
+          createdAt: memory.createdAt,
+          updatedAt: memory.updatedAt,
+        );
+        await db.insertMemory(updated);
+        importedCount++;
+      }
+
+      // Process any unprocessed documents
+      await DocumentExtractionService.instance.processUnprocessedDocuments();
+    } catch (e) {
+      debugPrint('[DeviceMemoryScanner] Error scanning all documents: $e');
+    }
+    return importedCount;
   }
 }

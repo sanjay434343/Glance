@@ -38,6 +38,8 @@ enum QueryIntent {
   messageSearch,      // "sms messages", "text messages from Alex"
   notificationSearch, // "show my notifications", "messages from WhatsApp"
   calendarSearch,     // "calendar events", "meetings today", "scheduled appointments"
+  documentSearch,     // "show documents", "find my pdf", "resume", "invoice"
+  entitySearch,       // "what is my otp", "find phone numbers", "find email", "show addresses", "urls"
   conversational,     // "hi", "tell me a joke", "how are you"
 }
 
@@ -238,7 +240,34 @@ class QueryAnalyzer {
       );
     }
 
-    // 8. Notification queries (non-call, non-SMS)
+    // 8. Smart Entity queries (e.g. "what is my otp", "find phone numbers", "find email", "urls", "verification code")
+    if (_isEntityQuery(lower)) {
+      final entityType = _detectEntityType(lower);
+      return AnalyzedQuery(
+        intent: QueryIntent.entitySearch,
+        keywords: [if (entityType != null) entityType, ..._extractKeywords(lower, excludeTypeWords: true)],
+        typeFilter: null,
+        timeRange: _resolveTime(lower),
+        originalQuery: query,
+        searchDescription: 'Searching smart entities & data ($entityType)...',
+        isCountQuery: isCount,
+      );
+    }
+
+    // 9. Document & PDF queries
+    if (_isDocumentQuery(lower)) {
+      return AnalyzedQuery(
+        intent: QueryIntent.documentSearch,
+        keywords: _extractKeywords(lower, excludeTypeWords: true),
+        typeFilter: 'document',
+        timeRange: _resolveTime(lower),
+        originalQuery: query,
+        searchDescription: 'Searching your documents & PDFs...',
+        isCountQuery: isCount,
+      );
+    }
+
+    // 10. Notification queries (non-call, non-SMS)
     if (_isNotificationQuery(lower)) {
       return AnalyzedQuery(
         intent: QueryIntent.notificationSearch,
@@ -385,6 +414,46 @@ class QueryAnalyzer {
       return ['incoming', 'outgoing', 'missed', 'rejected'];
     }
     return types;
+  }
+
+  static bool _isEntityQuery(String lower) {
+    const entityKeywords = [
+      'otp', 'pin', 'verification code', 'security code', 'password',
+      'phone number', 'mobile number', 'contact number',
+      'email', 'email address', 'mail id',
+      'url', 'website link', 'web link', 'http',
+      'address', 'location address',
+    ];
+    return entityKeywords.any((k) => lower.contains(k));
+  }
+
+  static String? _detectEntityType(String lower) {
+    if (lower.contains('otp') || lower.contains('pin') || lower.contains('verification') || lower.contains('code')) {
+      return 'OTP_PIN';
+    }
+    if (lower.contains('phone') || lower.contains('mobile') || lower.contains('number')) {
+      return 'PHONE';
+    }
+    if (lower.contains('email') || lower.contains('mail')) {
+      return 'EMAIL';
+    }
+    if (lower.contains('url') || lower.contains('link') || lower.contains('website')) {
+      return 'URL';
+    }
+    if (lower.contains('address')) {
+      return 'ADDRESS';
+    }
+    return null;
+  }
+
+  static bool _isDocumentQuery(String lower) {
+    const docKeywords = [
+      'document', 'documents', 'doc', 'docs', 'pdf', 'pdfs',
+      'file', 'files', 'resume', 'cv', 'invoice', 'receipt',
+      'marksheet', 'grade card', 'certificate', 'salary slip',
+      'docx', 'pptx', 'xlsx',
+    ];
+    return docKeywords.any((k) => lower.contains(k));
   }
 
   static bool _isNotificationQuery(String lower) {

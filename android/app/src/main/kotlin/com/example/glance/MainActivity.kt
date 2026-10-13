@@ -629,61 +629,158 @@ class MainActivity : FlutterActivity() {
 
     private fun fetchRecentDocuments(): List<Map<String, Any>> {
         val list = mutableListOf<Map<String, Any>>()
+        val seenPaths = mutableSetOf<String>()
+
         val projection = arrayOf(
             MediaStore.Files.FileColumns._ID,
             MediaStore.Files.FileColumns.DISPLAY_NAME,
             MediaStore.Files.FileColumns.DATA,
             MediaStore.Files.FileColumns.DATE_MODIFIED,
-            MediaStore.Files.FileColumns.SIZE
+            MediaStore.Files.FileColumns.SIZE,
+            MediaStore.Files.FileColumns.MIME_TYPE
         )
 
-        val selection = "${MediaStore.Files.FileColumns.DATA} LIKE '%.pdf' OR " +
+        // Query MediaStore across MIME types as well as filename extensions
+        val selection = "${MediaStore.Files.FileColumns.MIME_TYPE} = 'application/pdf' OR " +
+                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE '%.pdf' OR " +
+                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE '%.docx' OR " +
+                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE '%.txt' OR " +
+                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE '%.md' OR " +
+                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE '%.csv' OR " +
+                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE '%.xlsx' OR " +
+                "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE '%.pptx' OR " +
+                "${MediaStore.Files.FileColumns.DATA} LIKE '%.pdf' OR " +
                 "${MediaStore.Files.FileColumns.DATA} LIKE '%.docx' OR " +
-                "${MediaStore.Files.FileColumns.DATA} LIKE '%.txt' OR " +
-                "${MediaStore.Files.FileColumns.DATA} LIKE '%.md' OR " +
-                "${MediaStore.Files.FileColumns.DATA} LIKE '%.csv' OR " +
-                "${MediaStore.Files.FileColumns.DATA} LIKE '%.xlsx' OR " +
-                "${MediaStore.Files.FileColumns.DATA} LIKE '%.pptx' OR " +
-                "${MediaStore.Files.FileColumns.DATA} LIKE '%.epub'"
+                "${MediaStore.Files.FileColumns.DATA} LIKE '%.txt'"
 
-        val cursor = contentResolver.query(
-            MediaStore.Files.getContentUri("external"),
-            projection,
-            selection,
-            null,
-            "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
-        )
+        try {
+            val cursor = contentResolver.query(
+                MediaStore.Files.getContentUri("external"),
+                projection,
+                selection,
+                null,
+                "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC"
+            )
 
-        cursor?.use {
-            val idCol = it.getColumnIndex(MediaStore.Files.FileColumns._ID)
-            val nameCol = it.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
-            val dataCol = it.getColumnIndex(MediaStore.Files.FileColumns.DATA)
-            val dateCol = it.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
-            val sizeCol = it.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
+            cursor?.use {
+                val idCol = it.getColumnIndex(MediaStore.Files.FileColumns._ID)
+                val nameCol = it.getColumnIndex(MediaStore.Files.FileColumns.DISPLAY_NAME)
+                val dataCol = it.getColumnIndex(MediaStore.Files.FileColumns.DATA)
+                val dateCol = it.getColumnIndex(MediaStore.Files.FileColumns.DATE_MODIFIED)
+                val sizeCol = it.getColumnIndex(MediaStore.Files.FileColumns.SIZE)
 
-            var count = 0
-            while (it.moveToNext() && count < 500) {
-                val id = if (idCol >= 0) it.getLong(idCol) else count.toLong()
-                val name = if (nameCol >= 0) it.getString(nameCol) ?: "Document" else "Document"
-                var path = if (dataCol >= 0) it.getString(dataCol) ?: "" else ""
-                if (path.isEmpty()) {
-                    path = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), id).toString()
+                var count = 0
+                while (it.moveToNext() && count < 500) {
+                    val id = if (idCol >= 0) it.getLong(idCol) else count.toLong()
+                    val name = if (nameCol >= 0) it.getString(nameCol) ?: "Document" else "Document"
+                    var path = if (dataCol >= 0) it.getString(dataCol) ?: "" else ""
+                    if (path.isEmpty()) {
+                        path = ContentUris.withAppendedId(MediaStore.Files.getContentUri("external"), id).toString()
+                    }
+                    val dateSec = if (dateCol >= 0) it.getLong(dateCol) else 0L
+                    val size = if (sizeCol >= 0) it.getLong(sizeCol) else 0L
+
+                    if (path.isNotEmpty() && !seenPaths.contains(path)) {
+                        seenPaths.add(path)
+                        val ext = name.substringAfterLast('.', "pdf").lowercase()
+                        val item = mapOf<String, Any>(
+                            "filename" to name,
+                            "filePath" to path,
+                            "fileType" to ext,
+                            "sizeBytes" to size,
+                            "modifiedAt" to (dateSec * 1000)
+                        )
+                        list.add(item)
+                        count++
+                    }
                 }
-                val dateSec = if (dateCol >= 0) it.getLong(dateCol) else 0L
-                val size = if (sizeCol >= 0) it.getLong(sizeCol) else 0L
-
-                val ext = name.substringAfterLast('.', "txt")
-                val item = mapOf<String, Any>(
-                    "filename" to name,
-                    "filePath" to path,
-                    "fileType" to ext,
-                    "sizeBytes" to size,
-                    "modifiedAt" to (dateSec * 1000)
-                )
-                list.add(item)
-                count++
             }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Error querying documents MediaStore: ${e.message}")
         }
+
+        // 1. Direct priority scan on the entire Downloads directory & variations
+        try {
+            val downloadDirs = arrayOf(
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS),
+                File(android.os.Environment.getExternalStorageDirectory(), "Download"),
+                File(android.os.Environment.getExternalStorageDirectory(), "Downloads"),
+                File("/storage/emulated/0/Download"),
+                File("/storage/emulated/0/Downloads"),
+                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS),
+                File(android.os.Environment.getExternalStorageDirectory(), "Documents")
+            )
+
+            val extensions = setOf("pdf", "doc", "docx", "txt", "md", "epub", "xlsx", "xls", "pptx", "ppt", "csv")
+
+            for (dir in downloadDirs) {
+                if (dir.exists() && dir.isDirectory) {
+                    dir.walkTopDown()
+                        .onEnter { !it.name.startsWith(".") }
+                        .filter { it.isFile && !it.name.startsWith(".") }
+                        .forEach { file ->
+                            val ext = file.extension.lowercase()
+                            if (extensions.contains(ext)) {
+                                val path = file.absolutePath
+                                if (!seenPaths.contains(path)) {
+                                    seenPaths.add(path)
+                                    list.add(mapOf(
+                                        "filename" to file.name,
+                                        "filePath" to path,
+                                        "fileType" to ext,
+                                        "sizeBytes" to file.length(),
+                                        "modifiedAt" to file.lastModified()
+                                    ))
+                                }
+                            }
+                        }
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Downloads directory crawler note: ${e.message}")
+        }
+
+        // 2. Full recursive crawl starting from external storage root (/storage/emulated/0)
+        try {
+            val root = android.os.Environment.getExternalStorageDirectory()
+            if (root.exists()) {
+                val extensions = setOf("pdf", "doc", "docx", "txt", "md", "epub", "xlsx", "xls", "pptx", "ppt", "csv")
+
+                root.walkTopDown()
+                    .onEnter { dir ->
+                        val name = dir.name
+                        // Only skip hidden directories, Glance model weights, and Android/data or Android/obb (which are system restricted)
+                        if (name.startsWith(".")) return@onEnter false
+                        if (name.equals("data", ignoreCase = true) || name.equals("obb", ignoreCase = true)) {
+                            if (dir.parentFile?.name.equals("Android", ignoreCase = true)) return@onEnter false
+                        }
+                        if (dir.absolutePath.contains(".glance/models")) return@onEnter false
+                        true
+                    }
+                    .filter { it.isFile && !it.name.startsWith(".") }
+                    .forEach { file ->
+                        val ext = file.extension.lowercase()
+                        if (extensions.contains(ext)) {
+                            val path = file.absolutePath
+                            if (!seenPaths.contains(path)) {
+                                seenPaths.add(path)
+                                list.add(mapOf(
+                                    "filename" to file.name,
+                                    "filePath" to path,
+                                    "fileType" to ext,
+                                    "sizeBytes" to file.length(),
+                                    "modifiedAt" to file.lastModified()
+                                ))
+                            }
+                        }
+                    }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MainActivity", "Full storage crawler note: ${e.message}")
+        }
+
+        // Sort descending by modifiedAt
+        list.sortByDescending { (it["modifiedAt"] as? Long) ?: 0L }
         return list
     }
 
@@ -709,32 +806,36 @@ class MainActivity : FlutterActivity() {
         val file = File(pdfPath)
         if (!file.exists()) return paths
         
-        val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-        val renderer = PdfRenderer(pfd)
-        
-        for (i in 0 until renderer.pageCount) {
-            val page = renderer.openPage(i)
-            // Render at 2x scale for higher quality OCR readability
-            val width = page.width * 2
-            val height = page.height * 2
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            // Fill with white background since PDFs often assume a white sheet
-            val canvas = Canvas(bitmap)
-            canvas.drawColor(android.graphics.Color.WHITE)
+        try {
+            val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            val renderer = PdfRenderer(pfd)
+            val maxPages = Math.min(renderer.pageCount, 3) // Only render up to 3 pages to prevent OOM/crashing
             
-            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            page.close()
-            
-            val tempFile = File(cacheDir, "pdf_page_${System.currentTimeMillis()}_$i.jpg")
-            val fos = java.io.FileOutputStream(tempFile)
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, fos)
-            fos.flush()
-            fos.close()
-            
-            paths.add(tempFile.absolutePath)
+            for (i in 0 until maxPages) {
+                val page = renderer.openPage(i)
+                val width = page.width
+                val height = page.height
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                canvas.drawColor(android.graphics.Color.WHITE)
+                
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                page.close()
+                
+                val tempFile = File(cacheDir, "pdf_page_${System.currentTimeMillis()}_$i.jpg")
+                val fos = java.io.FileOutputStream(tempFile)
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 85, fos)
+                fos.flush()
+                fos.close()
+                bitmap.recycle()
+                
+                paths.add(tempFile.absolutePath)
+            }
+            renderer.close()
+            pfd.close()
+        } catch (e: Exception) {
+            android.util.Log.e("Glance", "Error rendering PDF pages: ${e.message}")
         }
-        renderer.close()
-        pfd.close()
         return paths
     }
 }

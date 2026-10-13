@@ -169,6 +169,18 @@ class GlanceDatabase {
       )
     ''');
 
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS app_usage_history (
+        package_name TEXT NOT NULL,
+        date_key TEXT NOT NULL,
+        app_name TEXT NOT NULL,
+        usage_time_ms INTEGER NOT NULL DEFAULT 0,
+        open_count INTEGER NOT NULL DEFAULT 0,
+        last_updated INTEGER NOT NULL,
+        PRIMARY KEY (package_name, date_key)
+      )
+    ''');
+
     try {
       await db.execute('ALTER TABLE memories ADD COLUMN sha_hash TEXT;');
     } catch (_) {}
@@ -177,6 +189,19 @@ class GlanceDatabase {
     } catch (_) {}
     try {
       await db.execute('ALTER TABLE memories ADD COLUMN image_base64 TEXT;');
+    } catch (_) {}
+    try {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS app_usage_history (
+          package_name TEXT NOT NULL,
+          date_key TEXT NOT NULL,
+          app_name TEXT NOT NULL,
+          usage_time_ms INTEGER NOT NULL DEFAULT 0,
+          open_count INTEGER NOT NULL DEFAULT 0,
+          last_updated INTEGER NOT NULL,
+          PRIMARY KEY (package_name, date_key)
+        );
+      ''');
     } catch (_) {}
   }
 
@@ -627,18 +652,88 @@ class GlanceDatabase {
     return maps.map((m) => Memory.fromMap(m)).toList();
   }
 
-  /// Searches memories by source app name (fuzzy LIKE match).
-  Future<List<Memory>> getMemoriesByApp(String appName, {int limit = 20}) async {
+  /// Records or updates daily app usage stats in the app_usage_history table.
+  /// Even if Android system purges old usage stats, this SQLite record remains persistent forever.
+  Future<void> upsertAppUsageHistory({
+    required String packageName,
+    required String appName,
+    required String dateKey, // e.g., '2026-10-13'
+    required int usageTimeMs,
+    required int openCount,
+    int? timestamp,
+  }) async {
     await initialize();
-    final pattern = '%$appName%';
-    final maps = await _db!.query(
-      'memories',
-      where: "(source_app LIKE ? OR title LIKE ? OR source_package LIKE ?) AND is_hidden = 0",
-      whereArgs: [pattern, pattern, pattern],
-      orderBy: 'captured_at DESC',
+    final now = timestamp ?? DateTime.now().millisecondsSinceEpoch;
+
+    // Check existing record for this app on this date
+    final existing = await _db!.query(
+      'app_usage_history',
+      where: 'package_name = ? AND date_key = ?',
+      whereArgs: [packageName, dateKey],
+      limit: 1,
+    );
+
+    if (existing.isNotEmpty) {
+      final prevTime = existing.first['usage_time_ms'] as int? ?? 0;
+      final prevOpens = existing.first['open_count'] as int? ?? 0;
+
+      // Keep the maximum value so it never regresses even if system resets daily counter
+      final finalTime = usageTimeMs > prevTime ? usageTimeMs : prevTime;
+      final finalOpens = openCount > prevOpens ? openCount : prevOpens;
+
+      await _db!.update(
+        'app_usage_history',
+        {
+          'app_name': appName,
+          'usage_time_ms': finalTime,
+          'open_count': finalOpens,
+          'last_updated': now,
+        },
+        where: 'package_name = ? AND date_key = ?',
+        whereArgs: [packageName, dateKey],
+      );
+    } else {
+      await _db!.insert(
+        'app_usage_history',
+        {
+          'package_name': packageName,
+          'date_key': dateKey,
+          'app_name': appName,
+          'usage_time_ms': usageTimeMs,
+          'open_count': openCount,
+          'last_updated': now,
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+
+    _backupDb();
+  }
+
+  /// Retrieves the persistent daily usage record for a specific app on a specific date.
+  Future<Map<String, dynamic>?> getDailyAppUsage(String packageName, String dateKey) async {
+    await initialize();
+    final res = await _db!.query(
+      'app_usage_history',
+      where: 'package_name = ? AND date_key = ?',
+      whereArgs: [packageName, dateKey],
+      limit: 1,
+    );
+    if (res.isEmpty) return null;
+    return Map<String, dynamic>.from(res.first);
+  }
+
+  /// Retrieves all historical daily usage records for an app (ordered newest first).
+  Future<List<Map<String, dynamic>>> getAppUsageHistory(String packageName, {int limit = 30}) async {
+    await initialize();
+    final res = await _db!.query(
+      'app_usage_history',
+      where: 'package_name = ?',
+      whereArgs: [packageName],
+      orderBy: 'date_key DESC',
       limit: limit,
     );
-    return maps.map((m) => Memory.fromMap(m)).toList();
+    return res.map((r) => Map<String, dynamic>.from(r)).toList();
   }
 
   /// Cleans up duplicate copied_text memories in SQLite DB, keeping the earliest created record for each unique content.

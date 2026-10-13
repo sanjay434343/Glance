@@ -117,9 +117,74 @@ class GemmaMediaPipeBridge(private val context: Context) {
     fun getHardwareInfo(): Map<String, Any> {
         val gpuName = detectedGpuName ?: detectGpuAvailability()
         val hasGpu = hasGpuHardware || !gpuName.isNullOrBlank()
+
+        // 1. Android OS Version
+        val androidRelease = Build.VERSION.RELEASE ?: "Unknown"
+        val sdkInt = Build.VERSION.SDK_INT
+
+        // 2. Total Device RAM via ActivityManager.MemoryInfo (Official Android Doc API)
+        var totalRamBytes = 0L
+        var availRamBytes = 0L
+        try {
+            val actManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            if (actManager != null) {
+                val memInfo = ActivityManager.MemoryInfo()
+                actManager.getMemoryInfo(memInfo)
+                totalRamBytes = memInfo.totalMem
+                availRamBytes = memInfo.availMem
+            }
+        } catch (_: Exception) {}
+        val totalRamGB = (totalRamBytes.toDouble() / (1024.0 * 1024.0 * 1024.0))
+
+        // 3. Exact CPU Hardware & SoC Name (Build.SOC_MODEL on Android 12+, Build.HARDWARE, /proc/cpuinfo)
+        var cpuModel = ""
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val soc = Build.SOC_MODEL
+            if (!soc.isNullOrBlank() && soc != Build.UNKNOWN) {
+                cpuModel = soc
+            }
+        }
+        if (cpuModel.isBlank()) {
+            val hw = Build.HARDWARE
+            if (!hw.isNullOrBlank() && hw != Build.UNKNOWN) {
+                cpuModel = hw
+            }
+        }
+        if (cpuModel.isBlank()) {
+            cpuModel = try {
+                val scanner = java.util.Scanner(File("/proc/cpuinfo"))
+                var model = ""
+                while (scanner.hasNextLine()) {
+                    val line = scanner.nextLine()
+                    if (line.startsWith("Hardware", ignoreCase = true) || line.startsWith("model name", ignoreCase = true)) {
+                        model = line.substringAfter(":").trim()
+                        break
+                    }
+                }
+                scanner.close()
+                model
+            } catch (_: Exception) { "" }
+        }
+        if (cpuModel.isBlank()) {
+            cpuModel = Build.BOARD ?: "ARM64 Processor"
+        }
+
+        // 4. CPU Cores count
+        val cpuCores = Runtime.getRuntime().availableProcessors()
+
+        // 5. Check if meets recommended Gemma on-device criteria: Android >= 12 (API 31), RAM >= 7.5GB, GPU hardware present
+        val isQualified = (sdkInt >= 31) && (totalRamGB >= 7.2) && hasGpu
+
         return mapOf(
             "hasGpu" to hasGpu,
-            "gpuName" to (gpuName ?: "CPU Fallback (No GPU Name Found)"),
+            "gpuName" to (gpuName ?: "CPU Fallback"),
+            "cpuName" to cpuModel,
+            "cpuCores" to cpuCores,
+            "androidVersion" to androidRelease,
+            "sdkInt" to sdkInt,
+            "totalRamBytes" to totalRamBytes,
+            "totalRamGB" to totalRamGB,
+            "isQualified" to isQualified,
             "activeBackend" to activeBackend,
             "isModelLoaded" to (llmInference != null),
             "loadedModelPath" to (loadedModelPath ?: "")

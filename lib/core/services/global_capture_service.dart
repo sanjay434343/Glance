@@ -95,12 +95,22 @@ class GlobalCaptureService with WidgetsBindingObserver {
         }
       });
 
-      // Defer heavy Vision model loading and initial sync by 2 seconds
-      // so the Home Screen loads and renders instantly at 60fps without freezing
-      Future.delayed(const Duration(milliseconds: 2000), () async {
+      // Immediately perform initial sync of files, media, and recent activity
+      Future.microtask(() async {
         try {
-          await VisionService.instance.initialize();
-          await onUserActionDetected(actionName: 'App Launch');
+          await onUserActionDetected(actionName: 'Initial Fast Launch Sync');
+        } catch (_) {}
+      });
+
+      // Initialize Vision Model and kick off automated image scanning right after model is ready
+      Future.delayed(const Duration(milliseconds: 1500), () async {
+        try {
+          final initialized = await VisionService.instance.initialize();
+          if (initialized) {
+            debugPrint('[GlobalCaptureService] Model loaded. Initiating auto-scan of images/screenshots...');
+            await VisionService.instance.processAllExistingImages();
+          }
+          await onUserActionDetected(actionName: 'App Launch Full Sync');
           _startContinuousTimer();
         } catch (e) {
           debugPrint('[GlobalCaptureService] Deferred startup task error: $e');

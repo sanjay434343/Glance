@@ -74,6 +74,7 @@ class _PermissionsSettingsPageState extends State<PermissionsSettingsPage> with 
         title: Text(
           'System Permissions',
           style: TextStyle(
+            fontFamily: 'DMSans',
             fontSize: 18,
             fontWeight: FontWeight.bold,
             color: textColor,

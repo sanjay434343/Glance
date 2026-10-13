@@ -24,6 +24,11 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   int _selectedTabIndex =
       0; // 0: Days (Today), 1: Weeks (This Week), 2: Months (This Month)
 
+  static const int _batchSize = 20;
+  int _displayedCount = _batchSize;
+  bool _isLoadingMore = false;
+  late final ScrollController _scrollController;
+
   List<Memory>? _lastMemories;
   int? _lastTabIndex;
   List<_TimelineRowItem>? _cachedRows;
@@ -31,6 +36,34 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   @override
   void initState() {
     super.initState();
+    _scrollController = ScrollController();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 300) {
+      if (!_isLoadingMore && _cachedRows != null && _displayedCount < _cachedRows!.length) {
+        setState(() {
+          _isLoadingMore = true;
+        });
+        Future.delayed(const Duration(milliseconds: 250), () {
+          if (mounted) {
+            setState(() {
+              _displayedCount += _batchSize;
+              _isLoadingMore = false;
+            });
+          }
+        });
+      }
+    }
   }
 
   Future<void> _scanDevice() async {
@@ -51,6 +84,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     }
     _lastMemories = allMemories;
     _lastTabIndex = _selectedTabIndex;
+    _displayedCount = _batchSize; // reset batch size when dataset or tab changes
     _cachedRows = _computeRows(allMemories);
     return _cachedRows!;
   }
@@ -162,6 +196,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
             await _scanDevice();
           },
           child: CustomScrollView(
+            controller: _scrollController,
             physics: const BouncingScrollPhysics(
               parent: AlwaysScrollableScrollPhysics(),
             ),
@@ -189,9 +224,9 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
               ),
               ...memoriesAsync.when(
                 data: (allMemories) {
-                  final rows = _getOrBuildRows(allMemories);
+                  final allRows = _getOrBuildRows(allMemories);
 
-                  if (rows.isEmpty) {
+                  if (allRows.isEmpty) {
                     final timeFrameName = _selectedTabIndex == 0
                         ? 'Today'
                         : (_selectedTabIndex == 1 ? 'This Week' : 'This Month');
@@ -231,13 +266,15 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
                     ];
                   }
 
+                  final visibleRows = allRows.take(_displayedCount).toList();
+
                   return [
                     SliverPadding(
                       padding: const EdgeInsets.symmetric(horizontal: 24.0),
                       sliver: SliverList.builder(
-                        itemCount: rows.length,
+                        itemCount: visibleRows.length,
                         itemBuilder: (context, index) {
-                          final row = rows[index];
+                          final row = visibleRows[index];
                           if (row is _DateHeaderRowItem) {
                             return TimelineDateHeader(date: row.date);
                           } else if (row is _SpacingRowItem) {
@@ -504,6 +541,27 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     }
 
     if (typeLower == 'pdf' || typeLower == 'document') {
+      if (imgPath != null &&
+          imgPath.trim().isNotEmpty &&
+          File(imgPath.trim()).existsSync()) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: Image.file(
+            File(imgPath.trim()),
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+            cacheWidth: 96,
+            cacheHeight: 96,
+            gaplessPlayback: true,
+            errorBuilder: (context, error, stackTrace) => Image.asset(
+              'assets/icons/documens.png',
+              width: size,
+              height: size,
+            ),
+          ),
+        );
+      }
       return Image.asset(
         'assets/icons/documens.png',
         width: size,

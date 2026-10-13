@@ -37,7 +37,7 @@ class _TimelineItemState extends State<TimelineItem> {
     final bgColor = isDark ? const Color(0xFF121212) : const Color(0xFFF8F9FA);
     final lineColor = isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.05);
     final timeColor = isDark ? Colors.grey[500]! : const Color(0xFF6B7280);
-    final dotColor = widget.isFirst ? const Color(0xFF3478F6) : lineColor;
+    final dotColor = widget.isLast ? const Color(0xFF3478F6) : lineColor;
 
     const double topOffset = 36.0;
 
@@ -240,7 +240,7 @@ class _TimelineLinePainter extends CustomPainter {
     }
 
     // Dot at (startX, dotCenterY)
-    if (isFirst) {
+    if (isLast) {
       final fillPaint = Paint()
         ..color = dotColor
         ..style = PaintingStyle.fill;

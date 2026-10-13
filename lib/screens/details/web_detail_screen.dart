@@ -1,5 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+
 import '../../core/models/memory_models.dart';
 import 'widgets/related_memories_carousel.dart';
 
@@ -8,23 +11,43 @@ class WebDetailScreen extends StatelessWidget {
 
   const WebDetailScreen({super.key, required this.memory});
 
+  void _copyToClipboard(BuildContext context, String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Copied link to clipboard!'),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primaryColor = Theme.of(context).primaryColor;
-    final bgColor = isDark ? const Color(0xFF121212) : Colors.white;
-    final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final bgColor = isDark ? const Color(0xFF121315) : Colors.white;
+    final cardColor = isDark ? const Color(0xFF1C2026) : const Color(0xFFF8FAFC);
+    final borderColor = isDark ? const Color(0xFF2C323D) : const Color(0xFFE2E8F0);
     final textColor = isDark ? Colors.white : const Color(0xFF111418);
     final textSecondary = isDark ? Colors.grey[400]! : const Color(0xFF6B7280);
+    final buttonColor = isDark ? const Color(0xFF2A2A2A) : const Color(0xFF1A1D21);
+    const buttonIconColor = Colors.white;
 
-    final dateStr = DateTime.fromMillisecondsSinceEpoch(memory.capturedAt).toLocal().toString().split('.').first;
-    final url = memory.url ?? 'https://webrtc.org/documentation';
+    final dateStr = DateFormat('MMM d, yyyy • h:mm a').format(
+      DateTime.fromMillisecondsSinceEpoch(memory.capturedAt),
+    );
+    final url = memory.url ?? 'https://webrtc.org';
 
     String host = '';
     try {
       final uri = Uri.parse(url.startsWith('http') ? url : 'https://$url');
       host = uri.host;
     } catch (_) {}
+
+    final hasThumbnail = memory.thumbnailPath != null &&
+        memory.thumbnailPath!.trim().isNotEmpty &&
+        File(memory.thumbnailPath!.trim()).existsSync();
 
     final stopWords = {
       'this', 'that', 'with', 'from', 'have', 'your', 'about', 'will',
@@ -50,147 +73,384 @@ class WebDetailScreen extends StatelessWidget {
           statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
           statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
         ),
-        backgroundColor: bgColor,
+        backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
-        leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: textColor),
-          onPressed: () => Navigator.of(context).pop(),
+        centerTitle: true,
+        leading: Padding(
+          padding: const EdgeInsets.only(left: 16.0),
+          child: Center(
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).pop(),
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: buttonColor,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  color: buttonIconColor,
+                  size: 18,
+                ),
+              ),
+            ),
+          ),
         ),
-        title: Text(
-          'Web Entry Detail',
-          style: TextStyle(
-            color: textColor,
-            fontFamily: 'DMSans',
-            fontWeight: FontWeight.bold,
-            fontSize: 20,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16.0),
+            child: Center(
+              child: GestureDetector(
+                onTap: () => _copyToClipboard(context, url),
+                child: Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: buttonColor,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.copy_rounded,
+                    color: buttonIconColor,
+                    size: 18,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0.0, end: 1.0),
+        duration: const Duration(milliseconds: 600),
+        curve: Curves.easeOutCubic,
+        builder: (context, value, child) {
+          return Opacity(
+            opacity: value,
+            child: Transform.translate(
+              offset: Offset(0, 30 * (1 - value)),
+              child: child,
+            ),
+          );
+        },
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 16),
+
+              // ==========================================
+              // HERO SQUARE PREVIEW CARD (like all other detail pages)
+              // ==========================================
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                width: double.infinity,
+                height: 380,
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(40),
+                  border: Border.all(color: borderColor),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.06),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(40),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // Hero thumbnail or stylized fallback surface
+                      if (hasThumbnail)
+                        Image.file(
+                          File(memory.thumbnailPath!.trim()),
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stackTrace) =>
+                              _buildHeroFallback(isDark, host, primaryColor),
+                        )
+                      else
+                        _buildHeroFallback(isDark, host, primaryColor),
+
+                      // Top App/Web Pill
+                      Positioned(
+                        top: 20,
+                        left: 20,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.70),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.15),
+                              width: 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.language_rounded,
+                                size: 16,
+                                color: Colors.blueAccent,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                host.isNotEmpty ? host.toUpperCase() : 'WEBSITE',
+                                style: const TextStyle(
+                                  fontFamily: 'DMSans',
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.5,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      // Bottom Gradient Title Overlay
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(20, 40, 20, 20),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.transparent,
+                                Colors.black.withValues(alpha: 0.85),
+                                Colors.black.withValues(alpha: 0.98),
+                              ],
+                              stops: const [0.0, 0.6, 1.0],
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                memory.title,
+                                style: const TextStyle(
+                                  fontFamily: 'DMSans',
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                  height: 1.2,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                url,
+                                style: const TextStyle(
+                                  fontFamily: 'DMSans',
+                                  fontSize: 13,
+                                  color: Colors.blueAccent,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              // Metadata Tags
+              if (tags.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: tags.map((tag) {
+                      return Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: isDark ? const Color(0xFF1E2128) : const Color(0xFFF1F5F9),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: borderColor),
+                        ),
+                        child: Text(
+                          tag,
+                          style: TextStyle(
+                            fontFamily: 'DMSans',
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+
+              const SizedBox(height: 24),
+
+              // ==========================================
+              // SCRAPED CONTENT & SUMMARY CARD
+              // ==========================================
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.all(22),
+                decoration: BoxDecoration(
+                  color: cardColor,
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: borderColor),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Scraped Page Content',
+                          style: TextStyle(
+                            fontFamily: 'DMSans',
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: textColor,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: primaryColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'LIVE EXTRACTED',
+                            style: TextStyle(
+                              fontFamily: 'DMSans',
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.4,
+                              color: primaryColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    SelectableText(
+                      memory.content.trim().isNotEmpty
+                          ? memory.content.trim()
+                          : 'No text content available for this web link.',
+                      style: TextStyle(
+                        fontFamily: 'DMSans',
+                        fontSize: 15,
+                        height: 1.55,
+                        color: textColor,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    Divider(color: borderColor, height: 1),
+                    const SizedBox(height: 14),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Captured Date',
+                          style: TextStyle(
+                            fontFamily: 'DMSans',
+                            fontSize: 13,
+                            color: textSecondary,
+                          ),
+                        ),
+                        Text(
+                          dateStr,
+                          style: TextStyle(
+                            fontFamily: 'DMSans',
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: textColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 32),
+
+              // ==========================================
+              // RELATED CAPTURES CAROUSEL
+              // ==========================================
+              RelatedMemoriesCarousel(
+                currentMemory: memory,
+                tags: tags,
+                isDark: isDark,
+                primaryColor: primaryColor,
+              ),
+
+              const SizedBox(height: 48),
+            ],
           ),
         ),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
+    );
+  }
+
+  Widget _buildHeroFallback(bool isDark, String host, Color primaryColor) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isDark
+              ? [const Color(0xFF1E2638), const Color(0xFF12141C)]
+              : [const Color(0xFFE8EEF8), const Color(0xFFD4E2F7)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Center(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Web Header Card
             Container(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(24),
               decoration: BoxDecoration(
-                color: cardColor,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E7EB)),
+                color: primaryColor.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: primaryColor.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Icon(Icons.language, color: primaryColor, size: 28),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              memory.title,
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: textColor,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              url,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: primaryColor,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    onPressed: () {},
-                    icon: const Icon(Icons.open_in_new, size: 18),
-                    label: const Text('Open Webpage'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                  ),
-                ],
+              child: Icon(
+                Icons.language_rounded,
+                size: 64,
+                color: primaryColor,
               ),
             ),
-
-            const SizedBox(height: 24),
-
-            // Extracted Web Content Snippet
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: cardColor,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: isDark ? const Color(0xFF333333) : const Color(0xFFE5E7EB)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Page Summary & Content',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: textColor,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    memory.content,
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.5,
-                      color: textColor,
-                    ),
-                  ),
-                  const Divider(height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('Visited Date', style: TextStyle(fontSize: 13, color: textSecondary)),
-                      Text(dateStr, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: textColor)),
-                    ],
-                  ),
-                ],
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: Text(
+                host.isNotEmpty ? host : 'Web Page',
+                style: TextStyle(
+                  fontFamily: 'DMSans',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
+                textAlign: TextAlign.center,
               ),
             ),
-
-            const SizedBox(height: 32),
-
-            // ==========================================
-            // RELATED CAPTURES CAROUSEL
-            // ==========================================
-            RelatedMemoriesCarousel(
-              currentMemory: memory,
-              tags: tags,
-              isDark: isDark,
-              primaryColor: primaryColor,
-            ),
-
-            const SizedBox(height: 48),
           ],
         ),
       ),

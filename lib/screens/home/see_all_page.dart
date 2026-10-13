@@ -18,6 +18,45 @@ class _SeeAllPageState extends ConsumerState<SeeAllPage> {
   final String _searchQuery = '';
   String _selectedFilter = 'All';
 
+  static const int _batchSize = 20;
+  int _displayedCount = _batchSize;
+  int _totalFilteredCount = 0;
+  bool _isLoadingMore = false;
+  late final ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent - 250) {
+      if (!_isLoadingMore && _displayedCount < _totalFilteredCount) {
+        setState(() {
+          _isLoadingMore = true;
+        });
+        Future.delayed(const Duration(milliseconds: 250), () {
+          if (mounted) {
+            setState(() {
+              _displayedCount += _batchSize;
+              _isLoadingMore = false;
+            });
+          }
+        });
+      }
+    }
+  }
+
   IconData _getIconForType(String type) {
     switch (type.toLowerCase()) {
       case 'screenshot':
@@ -86,13 +125,13 @@ class _SeeAllPageState extends ConsumerState<SeeAllPage> {
             padding: const EdgeInsets.only(left: 16, top: 16, bottom: 8),
             child: Row(
               children: [
-                HomeFilterChip(label: 'All', imagePath: 'assets/icons/all.png', isSelected: _selectedFilter == 'All', isDark: isDark, onTap: () => setState(() => _selectedFilter = 'All')),
-                HomeFilterChip(label: 'Screenshots', imagePath: 'assets/icons/screenshot.png', isSelected: _selectedFilter == 'Screenshots', isDark: isDark, onTap: () => setState(() => _selectedFilter = 'Screenshots')),
-                HomeFilterChip(label: 'Websites', imagePath: 'assets/icons/website.png', isSelected: _selectedFilter == 'Websites', isDark: isDark, onTap: () => setState(() => _selectedFilter = 'Websites')),
-                HomeFilterChip(label: 'Files', imagePath: 'assets/icons/documens.png', isSelected: _selectedFilter == 'Files', isDark: isDark, onTap: () => setState(() => _selectedFilter = 'Files')),
-                HomeFilterChip(label: 'App Activity', imagePath: 'assets/icons/ap_activity.png', isSelected: _selectedFilter == 'App Activity', isDark: isDark, onTap: () => setState(() => _selectedFilter = 'App Activity')),
-                HomeFilterChip(label: 'Notification', imagePath: 'assets/icons/notification.png', isSelected: _selectedFilter == 'Notification', isDark: isDark, onTap: () => setState(() => _selectedFilter = 'Notification')),
-                HomeFilterChip(label: 'Copied text', imagePath: 'assets/icons/copied_text.png', isSelected: _selectedFilter == 'Copied text', isDark: isDark, onTap: () => setState(() => _selectedFilter = 'Copied text')),
+                HomeFilterChip(label: 'All', imagePath: 'assets/icons/all.png', isSelected: _selectedFilter == 'All', isDark: isDark, onTap: () => setState(() { _selectedFilter = 'All'; _displayedCount = _batchSize; })),
+                HomeFilterChip(label: 'Screenshots', imagePath: 'assets/icons/screenshot.png', isSelected: _selectedFilter == 'Screenshots', isDark: isDark, onTap: () => setState(() { _selectedFilter = 'Screenshots'; _displayedCount = _batchSize; })),
+                HomeFilterChip(label: 'Websites', imagePath: 'assets/icons/website.png', isSelected: _selectedFilter == 'Websites', isDark: isDark, onTap: () => setState(() { _selectedFilter = 'Websites'; _displayedCount = _batchSize; })),
+                HomeFilterChip(label: 'Files', imagePath: 'assets/icons/documens.png', isSelected: _selectedFilter == 'Files', isDark: isDark, onTap: () => setState(() { _selectedFilter = 'Files'; _displayedCount = _batchSize; })),
+                HomeFilterChip(label: 'App Activity', imagePath: 'assets/icons/ap_activity.png', isSelected: _selectedFilter == 'App Activity', isDark: isDark, onTap: () => setState(() { _selectedFilter = 'App Activity'; _displayedCount = _batchSize; })),
+                HomeFilterChip(label: 'Notification', imagePath: 'assets/icons/notification.png', isSelected: _selectedFilter == 'Notification', isDark: isDark, onTap: () => setState(() { _selectedFilter = 'Notification'; _displayedCount = _batchSize; })),
+                HomeFilterChip(label: 'Copied text', imagePath: 'assets/icons/copied_text.png', isSelected: _selectedFilter == 'Copied text', isDark: isDark, onTap: () => setState(() { _selectedFilter = 'Copied text'; _displayedCount = _batchSize; })),
               ],
             ),
           ),
@@ -132,12 +171,32 @@ class _SeeAllPageState extends ConsumerState<SeeAllPage> {
                   );
                 }
 
+                _totalFilteredCount = filtered.length;
+                final visibleItems = filtered.take(_displayedCount).toList();
+                final bool hasMore = _displayedCount < filtered.length;
+
                 return ListView.builder(
+                  controller: _scrollController,
                   physics: const BouncingScrollPhysics(),
-                  itemCount: filtered.length,
+                  itemCount: visibleItems.length + (hasMore ? 1 : 0),
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   itemBuilder: (context, index) {
-                    final mem = filtered[index];
+                    if (index == visibleItems.length) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        child: Center(
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.2,
+                              color: textColor.withValues(alpha: 0.6),
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+                    final mem = visibleItems[index];
                     final isBase64Icon = mem.type == 'app_activity';
 
                     double topRadius = 6;

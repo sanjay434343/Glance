@@ -5,6 +5,7 @@ import '../../core/database/glance_db.dart';
 import '../../core/native/glance_native_bridge.dart';
 import '../../core/services/gemma_mediapipe_service.dart';
 import '../../core/services/glance_permission_service.dart';
+import '../../core/providers/glance_providers.dart';
 import '../../core/theme/theme.dart';
 import '../search/search_screen.dart';
 import 'subpages/ai_model_settings_page.dart';
@@ -20,7 +21,8 @@ class SettingsScreen extends ConsumerStatefulWidget {
   ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBindingObserver {
+class _SettingsScreenState extends ConsumerState<SettingsScreen>
+    with WidgetsBindingObserver {
   // Ungranted System Permissions
   List<GlancePermissionItem> _ungrantedPermissions = [];
   bool _isLoadingPermissions = true;
@@ -40,6 +42,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
   // Glance App Battery Usage
   Map<String, dynamic>? _batteryUsage;
   bool _isLoadingBattery = true;
+
+
 
   @override
   void initState() {
@@ -154,9 +158,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
     final hasModelFile = _modelPath != null && _modelFileSize > 0;
     final permissionsClear = _ungrantedPermissions.isEmpty;
 
-    final batteryPercent = _batteryUsage?['batteryUsagePercent'] as String? ?? '< 1.0%';
-    final batteryDrainLevel = _batteryUsage?['drainLevel'] as String? ?? 'Minimal (< 2%)';
-    final batteryStatus = _batteryUsage?['status'] as String? ?? 'Optimized by Android';
+    final batteryPercent =
+        _batteryUsage?['batteryUsagePercent'] as String? ?? '< 1.0%';
+    final batteryDrainLevel =
+        _batteryUsage?['drainLevel'] as String? ?? 'Minimal (< 2%)';
+    final batteryStatus =
+        _batteryUsage?['status'] as String? ?? 'Optimized by Android';
     final cpuSeconds = _batteryUsage?['cpuTimeSeconds'] as int? ?? 12;
 
     return Scaffold(
@@ -178,7 +185,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                       Text(
                         'Settings',
                         style: TextStyle(
-                          fontFamily: 'PlaywriteAR',
+                          fontFamily: 'DMSans',
                           fontSize: 28,
                           fontWeight: FontWeight.bold,
                           color: textColor,
@@ -188,10 +195,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                       const SizedBox(height: 2),
                       Text(
                         'Preferences & hardware controls',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: subColor,
-                        ),
+                        style: TextStyle(fontSize: 13, color: subColor),
                       ),
                     ],
                   ),
@@ -205,13 +209,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                           onTap: () {
                             Navigator.of(context, rootNavigator: true).push(
                               PageRouteBuilder(
-                                pageBuilder: (context, animation, secondaryAnimation) =>
-                                    const SearchScreen(),
+                                pageBuilder:
+                                    (context, animation, secondaryAnimation) =>
+                                        const SearchScreen(),
                                 transitionsBuilder:
-                                    (context, animation, secondaryAnimation, child) {
-                                  return FadeTransition(opacity: animation, child: child);
-                                },
-                                transitionDuration: const Duration(milliseconds: 250),
+                                    (
+                                      context,
+                                      animation,
+                                      secondaryAnimation,
+                                      child,
+                                    ) {
+                                      return FadeTransition(
+                                        opacity: animation,
+                                        child: child,
+                                      );
+                                    },
+                                transitionDuration: const Duration(
+                                  milliseconds: 250,
+                                ),
                               ),
                             );
                           },
@@ -219,7 +234,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                           child: Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: isDark ? const Color(0xFF22232B) : const Color(0xFFF1F3F5),
+                              color: isDark
+                                  ? const Color(0xFF22232B)
+                                  : const Color(0xFFF1F3F5),
                               shape: BoxShape.circle,
                               border: Border.all(
                                 color: isDark
@@ -265,7 +282,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                   border: Border.all(color: cardBorder),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
+                      color: Colors.black.withValues(
+                        alpha: isDark ? 0.2 : 0.04,
+                      ),
                       blurRadius: 14,
                       offset: const Offset(0, 4),
                     ),
@@ -283,7 +302,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                             color: primaryColor.withValues(alpha: 0.12),
                             shape: BoxShape.circle,
                           ),
-                          child: Icon(Icons.dashboard_customize_rounded, color: primaryColor, size: 20),
+                          child: Icon(
+                            Icons.dashboard_customize_rounded,
+                            color: primaryColor,
+                            size: 20,
+                          ),
                         ),
                         const SizedBox(width: 10),
                         Text(
@@ -296,9 +319,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                         ),
                         const Spacer(),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 9,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF10B981).withValues(alpha: 0.12),
+                            color: const Color(
+                              0xFF10B981,
+                            ).withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: const Text(
@@ -321,7 +349,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                           child: Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: isDark ? Colors.black.withValues(alpha: 0.25) : const Color(0xFFF3F4F6),
+                              color: isDark
+                                  ? Colors.black.withValues(alpha: 0.25)
+                                  : const Color(0xFFF3F4F6),
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: Column(
@@ -329,20 +359,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                               children: [
                                 Row(
                                   children: [
-                                    Icon(Icons.bolt_rounded, size: 16, color: const Color(0xFF6366F1)),
+                                    Icon(
+                                      Icons.bolt_rounded,
+                                      size: 16,
+                                      color: const Color(0xFF6366F1),
+                                    ),
                                     const SizedBox(width: 4),
-                                    Text('AI Engine', style: TextStyle(fontSize: 11, color: subColor)),
+                                    Text(
+                                      'AI Engine',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: subColor,
+                                      ),
+                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   isModelLoaded
-                                      ? (_gpuEnabled ? 'GPU Active' : 'CPU Active')
+                                      ? (_gpuEnabled
+                                            ? 'GPU Active'
+                                            : 'CPU Active')
                                       : (hasModelFile ? 'Idle' : 'No Model'),
                                   style: TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.bold,
-                                    color: isModelLoaded ? const Color(0xFF10B981) : textColor,
+                                    color: isModelLoaded
+                                        ? const Color(0xFF10B981)
+                                        : textColor,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -357,7 +401,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                           child: Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: isDark ? Colors.black.withValues(alpha: 0.25) : const Color(0xFFF3F4F6),
+                              color: isDark
+                                  ? Colors.black.withValues(alpha: 0.25)
+                                  : const Color(0xFFF3F4F6),
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: Column(
@@ -365,9 +411,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                               children: [
                                 Row(
                                   children: [
-                                    Icon(Icons.storage_rounded, size: 16, color: const Color(0xFF3478F6)),
+                                    Icon(
+                                      Icons.storage_rounded,
+                                      size: 16,
+                                      color: const Color(0xFF3478F6),
+                                    ),
                                     const SizedBox(width: 4),
-                                    Text('Memories', style: TextStyle(fontSize: 11, color: subColor)),
+                                    Text(
+                                      'Memories',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: subColor,
+                                      ),
+                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 4),
@@ -391,7 +447,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                           child: Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: isDark ? Colors.black.withValues(alpha: 0.25) : const Color(0xFFF3F4F6),
+                              color: isDark
+                                  ? Colors.black.withValues(alpha: 0.25)
+                                  : const Color(0xFFF3F4F6),
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: Column(
@@ -399,9 +457,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                               children: [
                                 Row(
                                   children: [
-                                    const Icon(Icons.battery_charging_full_rounded, size: 16, color: Color(0xFF10B981)),
+                                    const Icon(
+                                      Icons.battery_charging_full_rounded,
+                                      size: 16,
+                                      color: Color(0xFF10B981),
+                                    ),
                                     const SizedBox(width: 4),
-                                    Text('Battery', style: TextStyle(fontSize: 11, color: subColor)),
+                                    Text(
+                                      'Battery',
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: subColor,
+                                      ),
+                                    ),
                                   ],
                                 ),
                                 const SizedBox(height: 4),
@@ -454,7 +522,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                         Container(
                           padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF10B981).withValues(alpha: 0.12),
+                            color: const Color(
+                              0xFF10B981,
+                            ).withValues(alpha: 0.12),
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
@@ -479,18 +549,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                               const SizedBox(height: 2),
                               Text(
                                 'Running in background ($batteryStatus)',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: subColor,
-                                ),
+                                style: TextStyle(fontSize: 12, color: subColor),
                               ),
                             ],
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF10B981).withValues(alpha: 0.14),
+                            color: const Color(
+                              0xFF10B981,
+                            ).withValues(alpha: 0.14),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Text(
@@ -513,7 +585,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                             children: [
                               Text(
                                 'Drain Level',
-                                style: TextStyle(fontSize: 11.5, color: subColor),
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: subColor,
+                                ),
                               ),
                               const SizedBox(height: 2),
                               Text(
@@ -533,7 +608,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                             children: [
                               Text(
                                 'Background CPU Time',
-                                style: TextStyle(fontSize: 11.5, color: subColor),
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: subColor,
+                                ),
                               ),
                               const SizedBox(height: 2),
                               Text(
@@ -589,9 +667,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                       icon: Icons.memory_rounded,
                       iconColor: const Color(0xFF6366F1),
                       title: 'AI Engine & GPU Acceleration',
-                      subtitle: 'Model status, Vulkan/GPU toggle, memory controls',
+                      subtitle:
+                          'Model status, Vulkan/GPU toggle, memory controls',
                       trailingWidget: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
                         decoration: BoxDecoration(
                           color: _gpuEnabled
                               ? const Color(0xFF6366F1).withValues(alpha: 0.12)
@@ -603,13 +685,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
-                            color: _gpuEnabled ? const Color(0xFF6366F1) : subColor,
+                            color: _gpuEnabled
+                                ? const Color(0xFF6366F1)
+                                : subColor,
                           ),
                         ),
                       ),
                       onTap: () async {
                         await Navigator.of(context, rootNavigator: true).push(
-                          MaterialPageRoute(builder: (_) => const AiModelSettingsPage()),
+                          MaterialPageRoute(
+                            builder: (_) => const AiModelSettingsPage(),
+                          ),
                         );
                         _loadAllStats();
                       },
@@ -621,11 +707,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                     // 2. System Permissions Subpage
                     _buildSubpageTile(
                       icon: Icons.security_rounded,
-                      iconColor: permissionsClear ? const Color(0xFF10B981) : Colors.amber[800]!,
+                      iconColor: permissionsClear
+                          ? const Color(0xFF10B981)
+                          : Colors.amber[800]!,
                       title: 'System Permissions',
                       subtitle: 'Photos, usage access, alerts & notifications',
                       trailingWidget: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
                         decoration: BoxDecoration(
                           color: permissionsClear
                               ? const Color(0xFF10B981).withValues(alpha: 0.12)
@@ -633,17 +724,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                          permissionsClear ? 'All Granted' : '${_ungrantedPermissions.length} Needed',
+                          permissionsClear
+                              ? 'All Granted'
+                              : '${_ungrantedPermissions.length} Needed',
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
-                            color: permissionsClear ? const Color(0xFF10B981) : Colors.amber[900],
+                            color: permissionsClear
+                                ? const Color(0xFF10B981)
+                                : Colors.amber[900],
                           ),
                         ),
                       ),
                       onTap: () async {
                         await Navigator.of(context, rootNavigator: true).push(
-                          MaterialPageRoute(builder: (_) => const PermissionsSettingsPage()),
+                          MaterialPageRoute(
+                            builder: (_) => const PermissionsSettingsPage(),
+                          ),
                         );
                         _loadAllStats();
                       },
@@ -660,11 +757,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                       subtitle: 'Clean duplicates, sync backup & memory purge',
                       trailingWidget: Text(
                         _formatBytes(_dbSizeBytes),
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: subColor),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: subColor,
+                        ),
                       ),
                       onTap: () async {
                         await Navigator.of(context, rootNavigator: true).push(
-                          MaterialPageRoute(builder: (_) => const StorageSettingsPage()),
+                          MaterialPageRoute(
+                            builder: (_) => const StorageSettingsPage(),
+                          ),
                         );
                         _loadAllStats();
                       },
@@ -681,7 +784,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                       subtitle: 'Background screenshot sync, OCR & automation',
                       onTap: () async {
                         await Navigator.of(context, rootNavigator: true).push(
-                          MaterialPageRoute(builder: (_) => const CaptureSettingsPage()),
+                          MaterialPageRoute(
+                            builder: (_) => const CaptureSettingsPage(),
+                          ),
                         );
                         _loadAllStats();
                       },
@@ -698,7 +803,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
                       subtitle: 'Version 1.0.0 • On-device AI architecture',
                       onTap: () async {
                         await Navigator.of(context, rootNavigator: true).push(
-                          MaterialPageRoute(builder: (_) => const AboutSettingsPage()),
+                          MaterialPageRoute(
+                            builder: (_) => const AboutSettingsPage(),
+                          ),
                         );
                       },
                       textColor: textColor,
@@ -736,7 +843,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> with WidgetsBin
     required String title,
     required String subtitle,
     Widget? trailingWidget,
-    required VoidCallback onTap,
+    VoidCallback? onTap,
     required Color textColor,
     required Color subColor,
   }) {

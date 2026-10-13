@@ -193,6 +193,11 @@ Rules:
           case 'notification':
             chunkBlock = _formatNotification(i + 1, mem, dateStr, appStr);
             break;
+          case 'pdf':
+          case 'document':
+          case 'file':
+            chunkBlock = _formatDocument(i + 1, mem, dateStr);
+            break;
           default:
             chunkBlock = _formatGeneric(i + 1, mem, dateStr, appStr);
         }
@@ -286,17 +291,72 @@ Rules:
 """;
   }
 
+  static String _formatDocument(
+    int index,
+    Memory mem,
+    String dateStr,
+  ) {
+    String smartEntitiesStr = '';
+    if (mem.summary != null && mem.summary!.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(mem.summary!);
+        if (decoded is Map && decoded['entities'] is Map) {
+          final entMap = decoded['entities'] as Map;
+          final lines = <String>[];
+          for (final entry in entMap.entries) {
+            lines.add('${entry.key}: ${(entry.value as List).join(", ")}');
+          }
+          if (lines.isNotEmpty) {
+            smartEntitiesStr = '\n- Smart Entities: ${lines.join(" | ")}';
+          }
+        } else if (decoded is List) {
+          smartEntitiesStr = '\n- Smart Entities: ${decoded.join(" | ")}';
+        }
+      } catch (_) {}
+    }
+
+    final contentPreview = mem.content.length > 500
+        ? '${mem.content.substring(0, 500)}...'
+        : mem.content;
+
+    return """
+[Memory $index] DOCUMENT
+- Title: ${mem.title}
+- Date: $dateStr$smartEntitiesStr
+- Content: $contentPreview
+""";
+  }
+
   static String _formatNotification(
     int index,
     Memory mem,
     String dateStr,
     String appStr,
   ) {
+    String smartEntitiesStr = '';
+    if (mem.summary != null && mem.summary!.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(mem.summary!);
+        if (decoded is Map && decoded['entities'] is Map) {
+          final entMap = decoded['entities'] as Map;
+          final lines = <String>[];
+          for (final entry in entMap.entries) {
+            lines.add('${entry.key}: ${(entry.value as List).join(", ")}');
+          }
+          if (lines.isNotEmpty) {
+            smartEntitiesStr = '\n- Smart Entities: ${lines.join(" | ")}';
+          }
+        } else if (decoded is List) {
+          smartEntitiesStr = '\n- Smart Entities: ${decoded.join(" | ")}';
+        }
+      } catch (_) {}
+    }
+
     return """
 [Memory $index] NOTIFICATION
 - From: $appStr
 - Time: $dateStr
-- Title: ${mem.title}
+- Title: ${mem.title}$smartEntitiesStr
 - Content: ${mem.content}
 """;
   }
@@ -308,10 +368,29 @@ Rules:
     String appStr,
   ) {
     final urlStr = mem.url != null ? '\n- URL: ${mem.url}' : '';
+    String smartEntitiesStr = '';
+    if (mem.summary != null && mem.summary!.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(mem.summary!);
+        if (decoded is Map && decoded['entities'] is Map) {
+          final entMap = decoded['entities'] as Map;
+          final lines = <String>[];
+          for (final entry in entMap.entries) {
+            lines.add('${entry.key}: ${(entry.value as List).join(", ")}');
+          }
+          if (lines.isNotEmpty) {
+            smartEntitiesStr = '\n- Smart Entities: ${lines.join(" | ")}';
+          }
+        } else if (decoded is List) {
+          smartEntitiesStr = '\n- Smart Entities: ${decoded.join(" | ")}';
+        }
+      } catch (_) {}
+    }
+
     return """
 [Memory $index] (${mem.type.toUpperCase()})
 - Source: $appStr$urlStr
-- Date: $dateStr
+- Date: $dateStr$smartEntitiesStr
 - Content: ${mem.content}
 """;
   }

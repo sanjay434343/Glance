@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:glance/core/services/vision_service.dart';
+import 'package:glance/core/services/document_extraction_service.dart';
 import '../../search/search_screen.dart';
 
 class HomeTopBar extends StatelessWidget {
@@ -84,8 +85,10 @@ class _VisionHeartbeatIndicatorState extends State<VisionHeartbeatIndicator>
     with SingleTickerProviderStateMixin {
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
-  StreamSubscription<VisionQueueStatus>? _subscription;
-  VisionQueueStatus? _currentStatus;
+  StreamSubscription<VisionQueueStatus>? _visionSubscription;
+  StreamSubscription<DocumentProcessingStatus>? _docSubscription;
+  VisionQueueStatus? _currentVisionStatus;
+  DocumentProcessingStatus? _currentDocStatus;
 
   @override
   void initState() {
@@ -99,53 +102,93 @@ class _VisionHeartbeatIndicatorState extends State<VisionHeartbeatIndicator>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
-    _subscription = VisionService.instance.statusStream.listen((status) {
+    _visionSubscription = VisionService.instance.statusStream.listen((status) {
       if (mounted) {
-        final wasProcessing = _currentStatus?.isProcessing ?? false;
-        final isProcessing = status.isProcessing;
-
         setState(() {
-          _currentStatus = status;
+          _currentVisionStatus = status;
         });
-
-        if (isProcessing && !wasProcessing) {
-          _pulseController.repeat(reverse: true);
-        } else if (!isProcessing && wasProcessing) {
-          _pulseController.stop();
-          _pulseController.reset();
-        }
+        _evaluateAnimation();
       }
     });
+
+    _docSubscription = DocumentExtractionService.instance.statusStream.listen((status) {
+      if (mounted) {
+        setState(() {
+          _currentDocStatus = status;
+        });
+        _evaluateAnimation();
+      }
+    });
+
+    _evaluateAnimation();
+  }
+
+  void _evaluateAnimation() {
+    final isVisionActive = (_currentVisionStatus?.isProcessing ?? false) ||
+        VisionService.instance.isProcessing;
+    final isDocActive = (_currentDocStatus?.isProcessing ?? false) ||
+        DocumentExtractionService.instance.isProcessing;
+
+    final isActive = isVisionActive || isDocActive;
+
+    if (isActive) {
+      if (!_pulseController.isAnimating) {
+        _pulseController.repeat(reverse: true);
+      }
+    } else {
+      if (_pulseController.isAnimating) {
+        _pulseController.stop();
+        _pulseController.reset();
+      }
+    }
   }
 
   @override
   void dispose() {
-    _subscription?.cancel();
+    _visionSubscription?.cancel();
+    _docSubscription?.cancel();
     _pulseController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final status = _currentStatus;
-    final isProcessing =
-        status?.isProcessing ?? VisionService.instance.isProcessing;
-    final queueLen = status?.queueLength ?? VisionService.instance.queueLength;
+    final isVisionActive = (_currentVisionStatus?.isProcessing ?? false) ||
+        VisionService.instance.isProcessing;
+    final visionQueueLen = _currentVisionStatus?.queueLength ?? VisionService.instance.queueLength;
 
-    if (!isProcessing && queueLen == 0) {
+    final isDocActive = (_currentDocStatus?.isProcessing ?? false) ||
+        DocumentExtractionService.instance.isProcessing;
+    final docRemaining = _currentDocStatus?.remainingCount ?? 0;
+
+    if (!isVisionActive && visionQueueLen == 0 && !isDocActive) {
       return const SizedBox.shrink();
     }
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final statusText = queueLen > 0 ? 'Processing ($queueLen)' : 'Processing';
+
+    // Dynamic label and color: Orange for Docs, Indigo for Vision AI
+    String statusText = 'Processing';
+    Color themeColor = const Color(0xFF6366F1);
+    Color bgColor = isDark ? const Color(0xFF1E1B4B) : const Color(0xFFEEF2FF);
+    Color textColor = isDark ? const Color(0xFFC7D2FE) : const Color(0xFF3730A3);
+
+    if (isDocActive) {
+      themeColor = const Color(0xFFFF9800);
+      bgColor = isDark ? const Color(0xFF3D2300) : const Color(0xFFFFF3E0);
+      textColor = isDark ? const Color(0xFFFFCC80) : const Color(0xFFE65100);
+      statusText = docRemaining > 0 ? 'Indexing Docs ($docRemaining)' : 'Indexing Docs';
+    } else if (isVisionActive) {
+      statusText = visionQueueLen > 0 ? 'Vision AI ($visionQueueLen)' : 'Vision AI';
+    }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1B4B) : const Color(0xFFEEF2FF),
-        borderRadius: BorderRadius.circular(20), // Pill shape
+        color: bgColor,
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: const Color(0xFF6366F1).withValues(alpha: 0.35),
+          color: themeColor.withValues(alpha: 0.35),
         ),
       ),
       child: Row(
@@ -158,10 +201,10 @@ class _VisionHeartbeatIndicatorState extends State<VisionHeartbeatIndicator>
               height: 8,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: const Color(0xFF6366F1),
+                color: themeColor,
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF6366F1).withValues(alpha: 0.6),
+                    color: themeColor.withValues(alpha: 0.6),
                     blurRadius: 6,
                     spreadRadius: 1,
                   ),
@@ -173,7 +216,7 @@ class _VisionHeartbeatIndicatorState extends State<VisionHeartbeatIndicator>
           Text(
             statusText,
             style: TextStyle(
-              color: isDark ? const Color(0xFFC7D2FE) : const Color(0xFF3730A3),
+              color: textColor,
               fontSize: 12,
               fontWeight: FontWeight.w600,
             ),

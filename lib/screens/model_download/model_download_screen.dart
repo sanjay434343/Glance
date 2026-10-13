@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../core/services/gemma_mediapipe_service.dart';
 import '../../core/services/model_download_service.dart';
@@ -167,6 +166,7 @@ class _ModelDownloadScreenState extends State<ModelDownloadScreen> {
         title: Text(
           'Model Download',
           style: TextStyle(
+            fontFamily: 'DMSans',
             fontSize: 18,
             fontWeight: FontWeight.bold,
             color: textColor,
@@ -177,33 +177,7 @@ class _ModelDownloadScreenState extends State<ModelDownloadScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            const SizedBox(height: 12),
-
-            // ── TOP MODEL HEADER ──
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24.0),
-              child: Column(
-                children: [
-                  Text(
-                    'Gemma 3N E2B IT',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: textColor,
-                      letterSpacing: -0.4,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Google On-Device Multimodal AI • ~2.4 GB',
-                    style: TextStyle(
-                      fontSize: 13.5,
-                      color: subColor,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            const SizedBox(height: 8),
 
             // ── MIDDLE: BIG CIRCULAR PROGRESS INDICATOR ──
             Expanded(
@@ -353,13 +327,43 @@ class _ModelDownloadScreenState extends State<ModelDownloadScreen> {
               ),
             ),
 
+            // ── MODEL NAME & SUBTITLE (ABOVE STATUS MESSAGE) ──
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24.0),
+              child: Column(
+                children: [
+                  Text(
+                    'Gemma Model',
+                    style: TextStyle(
+                      fontFamily: 'DMSans',
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: textColor,
+                      letterSpacing: -0.4,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Google On-Device Multimodal AI • ~2.4 GB',
+                    style: TextStyle(
+                      fontFamily: 'DMSans',
+                      fontSize: 13.5,
+                      color: subColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+
             if (_statusMessage != null)
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
                 child: Text(
                   _statusMessage!,
                   textAlign: TextAlign.center,
                   style: TextStyle(
+                    fontFamily: 'DMSans',
                     fontSize: 12.5,
                     fontWeight: FontWeight.w500,
                     color: (isCompleted || _isAutoLoading)
@@ -368,6 +372,7 @@ class _ModelDownloadScreenState extends State<ModelDownloadScreen> {
                   ),
                 ),
               ),
+            const SizedBox(height: 8),
 
             // ── BOTTOM: CANCEL AND DOWNLOAD BUTTONS ──
             Padding(
@@ -431,7 +436,9 @@ class _ModelDownloadScreenState extends State<ModelDownloadScreen> {
                                 ? 'Loading RAM...'
                                 : (isCompleted
                                     ? 'Re-Download'
-                                    : 'Download')),
+                                    : ((downloadedBytes > 0 && downloadedBytes < totalBytes)
+                                        ? 'Resume Download'
+                                        : 'Download'))),
                         style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.bold,

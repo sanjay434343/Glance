@@ -61,19 +61,27 @@ class GlancePermissionService {
       }
     } catch (_) {}
 
-    // 3. Photos & Media Storage (Indexes screenshots and images)
+    // 3. Storage & All Files Access (Indexes documents, PDFs, screenshots, and images)
     try {
-      final photosGranted = await Permission.photos.isGranted;
+      final manageStorageGranted = await Permission.manageExternalStorage.isGranted;
       final storageGranted = await Permission.storage.isGranted;
-      if (!photosGranted && !storageGranted) {
+      final photosGranted = await Permission.photos.isGranted;
+      if (!manageStorageGranted && !storageGranted && !photosGranted) {
         ungranted.add(
           GlancePermissionItem(
             id: 'photos_storage',
-            title: 'Photos & Storage',
-            subtitle: 'Required to sync screenshots and camera images',
-            icon: Icons.photo_library_outlined,
+            title: 'Storage & Files Access',
+            subtitle: 'Required to read PDFs, documents, screenshots, and media',
+            icon: Icons.folder_open_rounded,
             onRequest: () async {
-              await [Permission.photos, Permission.storage].request();
+              if (await Permission.manageExternalStorage.isDenied) {
+                await Permission.manageExternalStorage.request();
+              }
+              await [
+                Permission.storage,
+                Permission.photos,
+                Permission.audio,
+              ].request();
             },
           ),
         );

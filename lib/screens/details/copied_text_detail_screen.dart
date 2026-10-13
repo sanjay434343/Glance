@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:google_mlkit_entity_extraction/google_mlkit_entity_extraction.dart';
 
 import '../../core/models/memory_models.dart';
+import '../../core/services/smart_entity_service.dart';
 import 'widgets/related_memories_carousel.dart';
 
 class SmartEntity {
@@ -136,6 +137,13 @@ class _CopiedTextDetailScreenState extends State<CopiedTextDetailScreen> {
       setState(() {
         _entities = validEntities;
       });
+
+      // Push extracted entities to SQLite so search & RAG can query them
+      if (validEntities.isNotEmpty) {
+        try {
+          SmartEntityService.instance.enrichMemoryWithEntities(widget.memory);
+        } catch (_) {}
+      }
     }
   }
 

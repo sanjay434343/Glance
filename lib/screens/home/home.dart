@@ -14,6 +14,7 @@ import 'widgets/home_activity_item.dart';
 import 'widgets/animated_item.dart';
 import 'widgets/home_continue_card.dart';
 import 'widgets/home_section_header.dart';
+import 'widgets/home_insights_section.dart';
 import 'widgets/ai_chat_dialog.dart';
 import '../../core/services/global_capture_service.dart';
 import '../../core/services/glance_permission_service.dart';
@@ -296,9 +297,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         ),
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+        child: RefreshIndicator(
+          color: const Color(0xFF3478F6),
+          onRefresh: () async {
+            await GlobalCaptureService.instance.onUserActionDetected(actionName: 'Pull-to-refresh');
+            ref.invalidate(allMemoriesProvider);
+          },
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics(),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -423,59 +432,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
               const SizedBox(height: 32),
 
-              // ── Continue from yesterday ──
-              HomeSectionHeader(
-                title: 'Continue from yesterday',
-                actionIcon: Icons.chevron_right,
-                titleColor: textColor,
-                actionColor: textSecondary,
-              ),
-              const SizedBox(height: 16),
-
-              // Horizontal Cards
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                physics: const BouncingScrollPhysics(),
-                clipBehavior: Clip.none,
-                child: Row(
-                  children: () {
-                    final continueMemories = _displayedMemories.length > 3
-                        ? _displayedMemories.skip(3).take(5).toList()
-                        : _displayedMemories.take(3).toList();
-
-                    if (continueMemories.isNotEmpty) {
-                      return continueMemories.map((mem) {
-                        return HomeContinueCard(
-                          memory: mem,
-                          isDark: isDark,
-                          onTap: () =>
-                              DetailRouter.openDetailScreen(context, mem),
-                        );
-                      }).toList();
-                    }
-
-                    return [
-                      HomeContinueCard(
-                        icon: Icons.map_outlined,
-                        title: 'Map activity',
-                        subtitle: 'LOCATION',
-                        isDark: isDark,
-                      ),
-                      HomeContinueCard(
-                        icon: Icons.article_outlined,
-                        title: 'Recent Docs',
-                        subtitle: 'DOCUMENT',
-                        isDark: isDark,
-                      ),
-                      HomeContinueCard(
-                        icon: Icons.photo_outlined,
-                        title: 'Visual Memory',
-                        subtitle: 'PHOTOS',
-                        isDark: isDark,
-                      ),
-                    ];
-                  }(),
-                ),
+              // ── Memory Insights & Stats ──
+              HomeInsightsSection(
+                memories: _displayedMemories,
+                isDark: isDark,
+                onExploreTap: () {
+                  Navigator.of(
+                    context,
+                    rootNavigator: true,
+                  ).push(MaterialPageRoute(builder: (_) => const SeeAllPage()));
+                },
               ),
 
               // Spacer for bottom nav
@@ -484,7 +450,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ),
         ),
       ),
-    );
+    ),
+  );
   }
 
   // ── Build the activity list from local cached state (no provider-driven rebuild) ──

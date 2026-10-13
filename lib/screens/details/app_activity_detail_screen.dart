@@ -22,6 +22,7 @@ class _AppActivityDetailScreenState extends State<AppActivityDetailScreen> {
   int _openCount = 0;
   int _totalAppCaptures = 0;
   bool _isLoading = true;
+  List<Map<String, dynamic>> _dailyUsageHistory = [];
 
   @override
   void initState() {
@@ -43,6 +44,9 @@ class _AppActivityDetailScreenState extends State<AppActivityDetailScreen> {
 
   Future<void> _loadRealAppUsageData() async {
     try {
+      final now = DateTime.now();
+      final todayKey = DateFormat('yyyy-MM-dd').format(now);
+
       // 1. Fetch latest record from SQLite database
       final dbMem = await GlanceDatabase.instance.getMemory(widget.memory.id);
       if (dbMem != null) {
@@ -50,9 +54,18 @@ class _AppActivityDetailScreenState extends State<AppActivityDetailScreen> {
         _parseStatsFromSummary(dbMem);
       }
 
-      // 2. Query real live app activity from system if package is available
       final pkg = _memory.sourcePackage;
       if (pkg != null && pkg.isNotEmpty) {
+        // 2. Query persistent SQLite DB for today's stored usage
+        final storedDaily = await GlanceDatabase.instance.getDailyAppUsage(pkg, todayKey);
+        if (storedDaily != null) {
+          final storedMs = storedDaily['usage_time_ms'] as int? ?? 0;
+          final storedOpens = storedDaily['open_count'] as int? ?? 0;
+          if (storedMs > _usageTimeMs) _usageTimeMs = storedMs;
+          if (storedOpens > _openCount) _openCount = storedOpens;
+        }
+
+        // 3. Query live system app activity if available
         final liveApps = await GlanceNativeBridge.getAppActivity();
         final match = liveApps.firstWhere(
           (a) => a['packageName'] == pkg,
@@ -64,37 +77,59 @@ class _AppActivityDetailScreenState extends State<AppActivityDetailScreen> {
           final liveOpens = match['openCount'] as int? ?? 0;
           final liveTs = match['timestamp'] as int? ?? _memory.capturedAt;
 
-          if (liveUsage > 0 || liveOpens > 0) {
-            _usageTimeMs = liveUsage;
-            _openCount = liveOpens;
+          // Merge live system stats (always keep the higher value to prevent regression)
+          if (liveUsage > _usageTimeMs) _usageTimeMs = liveUsage;
+          if (liveOpens > _openCount) _openCount = liveOpens;
 
-            // Persist the real captured stats to SQLite DB
-            final statsJson = jsonEncode({
-              'openCount': _openCount,
-              'usageTimeMs': _usageTimeMs,
-            });
-            final updated = Memory(
-              id: _memory.id,
-              type: _memory.type,
-              title: _memory.title,
-              content: _memory.content,
-              source: _memory.source,
-              sourceApp: _memory.sourceApp,
-              sourcePackage: pkg,
-              url: _memory.url,
-              filePath: _memory.filePath,
-              thumbnailPath: _memory.thumbnailPath,
-              summary: statsJson,
-              capturedAt: liveTs,
-              createdAt: _memory.createdAt,
-              updatedAt: DateTime.now().millisecondsSinceEpoch,
-            );
-            _memory = updated;
-            await GlanceDatabase.instance.insertMemory(updated);
-          }
+          // Always persist today's stats to persistent app_usage_history table
+          await GlanceDatabase.instance.upsertAppUsageHistory(
+            packageName: pkg,
+            appName: _memory.title,
+            dateKey: todayKey,
+            usageTimeMs: _usageTimeMs,
+            openCount: _openCount,
+            timestamp: liveTs,
+          );
+
+          // Update memory record in SQLite
+          final statsJson = jsonEncode({
+            'openCount': _openCount,
+            'usageTimeMs': _usageTimeMs,
+          });
+          final updated = Memory(
+            id: _memory.id,
+            type: _memory.type,
+            title: _memory.title,
+            content: _memory.content,
+            source: _memory.source,
+            sourceApp: _memory.sourceApp,
+            sourcePackage: pkg,
+            url: _memory.url,
+            filePath: _memory.filePath,
+            thumbnailPath: _memory.thumbnailPath,
+            summary: statsJson,
+            capturedAt: liveTs,
+            createdAt: _memory.createdAt,
+            updatedAt: DateTime.now().millisecondsSinceEpoch,
+          );
+          _memory = updated;
+          await GlanceDatabase.instance.insertMemory(updated);
+        } else if (_usageTimeMs > 0 || _openCount > 0) {
+          // Even if live match is empty (e.g. system pruned), persist our cached daily stat
+          await GlanceDatabase.instance.upsertAppUsageHistory(
+            packageName: pkg,
+            appName: _memory.title,
+            dateKey: todayKey,
+            usageTimeMs: _usageTimeMs,
+            openCount: _openCount,
+          );
         }
 
-        // 3. Count total real memories in database for this app
+        // 4. Retrieve persistent historical daily usage records
+        final history = await GlanceDatabase.instance.getAppUsageHistory(pkg, limit: 14);
+        _dailyUsageHistory = history;
+
+        // 5. Count total real memories in database for this app
         final allMem = await GlanceDatabase.instance.getAllMemories();
         _totalAppCaptures = allMem.where((m) =>
           m.sourcePackage == pkg || (m.sourceApp != null && m.sourceApp == _memory.title)
@@ -636,6 +671,105 @@ class _AppActivityDetailScreenState extends State<AppActivityDetailScreen> {
                           const SizedBox(height: 24),
 
                           // ==========================================
+                          // PERSISTENT DAILY USAGE HISTORY CARD
+                          // ==========================================
+                          if (_dailyUsageHistory.isNotEmpty) ...[
+                            Container(
+                              padding: const EdgeInsets.all(22),
+                              decoration: BoxDecoration(
+                                color: cardColor,
+                                borderRadius: BorderRadius.circular(24),
+                                border: Border.all(color: borderColor),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Icon(
+                                        Icons.history_rounded,
+                                        size: 18,
+                                        color: primaryColor,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          'PERSISTENT DAILY USAGE HISTORY',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w900,
+                                            letterSpacing: 1.0,
+                                            color: primaryColor,
+                                          ),
+                                        ),
+                                      ),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 3,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: primaryColor.withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(
+                                              Icons.shield_outlined,
+                                              size: 11,
+                                              color: primaryColor,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              'GLANCE DB',
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w800,
+                                                color: primaryColor,
+                                                letterSpacing: 0.5,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Saved permanently in Glance database. Retained even if Android resets or clears usage stats.',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w400,
+                                      color: textSecondary,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 18),
+                                  ..._dailyUsageHistory.asMap().entries.map((entry) {
+                                    final index = entry.key;
+                                    final dayRecord = entry.value;
+                                    final isLast = index == _dailyUsageHistory.length - 1;
+                                    return Column(
+                                      children: [
+                                        _buildDailyHistoryItem(
+                                          dayRecord: dayRecord,
+                                          isDark: isDark,
+                                          textColor: textColor,
+                                          textSecondary: textSecondary,
+                                          primaryColor: primaryColor,
+                                        ),
+                                        if (!isLast) const Divider(height: 20),
+                                      ],
+                                    );
+                                  }),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                          ] else
+                            const SizedBox(height: 24),
+
+                          // ==========================================
                           // DETAILS CARD
                           // ==========================================
                           Container(
@@ -855,6 +989,131 @@ class _AppActivityDetailScreenState extends State<AppActivityDetailScreen> {
               ),
             ],
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDailyHistoryItem({
+    required Map<String, dynamic> dayRecord,
+    required bool isDark,
+    required Color textColor,
+    required Color textSecondary,
+    required Color primaryColor,
+  }) {
+    final dateKey = dayRecord['date_key']?.toString() ?? '';
+    final usageMs = (dayRecord['usage_time_ms'] as num?)?.toInt() ?? 0;
+    final opens = (dayRecord['open_count'] as num?)?.toInt() ?? 0;
+
+    // Format date nicely
+    String formattedDate = dateKey;
+    final now = DateTime.now();
+    final todayKey = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+    final yesterday = now.subtract(const Duration(days: 1));
+    final yesterdayKey = "${yesterday.year}-${yesterday.month.toString().padLeft(2, '0')}-${yesterday.day.toString().padLeft(2, '0')}";
+
+    if (dateKey == todayKey) {
+      formattedDate = 'Today';
+    } else if (dateKey == yesterdayKey) {
+      formattedDate = 'Yesterday';
+    } else {
+      try {
+        final parsed = DateTime.parse(dateKey);
+        formattedDate = DateFormat('EEE, MMM d').format(parsed);
+      } catch (_) {
+        formattedDate = dateKey;
+      }
+    }
+
+    final durationString = _formatDuration(usageMs);
+    final isToday = dateKey == todayKey;
+
+    return Row(
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: isToday
+                ? primaryColor.withValues(alpha: 0.16)
+                : (isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.05)),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(
+            isToday ? Icons.today_rounded : Icons.calendar_today_rounded,
+            color: isToday ? primaryColor : textSecondary,
+            size: 18,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    formattedDate,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: isToday ? FontWeight.w800 : FontWeight.w600,
+                      color: textColor,
+                    ),
+                  ),
+                  if (isToday) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                      decoration: BoxDecoration(
+                        color: primaryColor.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'LIVE',
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                          color: primaryColor,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '$opens ${opens == 1 ? "launch" : "launches"} • $dateKey',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w400,
+                  color: textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              durationString,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: textColor,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              usageMs > 0 ? '${(usageMs / 1000).toStringAsFixed(0)}s active' : '0s active',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+                color: textSecondary,
+              ),
+            ),
+          ],
         ),
       ],
     );

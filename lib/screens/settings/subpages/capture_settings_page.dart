@@ -65,6 +65,7 @@ class _CaptureSettingsPageState extends State<CaptureSettingsPage> {
         title: Text(
           'Capture & Privacy',
           style: TextStyle(
+            fontFamily: 'DMSans',
             fontSize: 18,
             fontWeight: FontWeight.bold,
             color: textColor,

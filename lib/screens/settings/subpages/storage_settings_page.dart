@@ -151,6 +151,7 @@ class _StorageSettingsPageState extends ConsumerState<StorageSettingsPage> {
         title: Text(
           'Database & Storage',
           style: TextStyle(
+            fontFamily: 'DMSans',
             fontSize: 18,
             fontWeight: FontWeight.bold,
             color: textColor,

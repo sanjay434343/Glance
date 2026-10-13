@@ -8,6 +8,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 class GemmaHardwareInfo {
   final bool hasGpu;
   final String gpuName;
+  final String cpuName;
+  final int cpuCores;
+  final String androidVersion;
+  final int sdkInt;
+  final double totalRamGB;
+  final bool isQualified;
   final String activeBackend;
   final bool isModelLoaded;
   final String loadedModelPath;
@@ -15,6 +21,12 @@ class GemmaHardwareInfo {
   GemmaHardwareInfo({
     required this.hasGpu,
     required this.gpuName,
+    this.cpuName = 'ARM64 Processor',
+    this.cpuCores = 8,
+    this.androidVersion = '12',
+    this.sdkInt = 31,
+    this.totalRamGB = 8.0,
+    this.isQualified = true,
     required this.activeBackend,
     required this.isModelLoaded,
     required this.loadedModelPath,
@@ -24,6 +36,12 @@ class GemmaHardwareInfo {
     return GemmaHardwareInfo(
       hasGpu: map['hasGpu'] as bool? ?? false,
       gpuName: map['gpuName'] as String? ?? 'CPU Fallback',
+      cpuName: map['cpuName'] as String? ?? 'ARM64 Processor',
+      cpuCores: (map['cpuCores'] as num?)?.toInt() ?? 8,
+      androidVersion: map['androidVersion'] as String? ?? '12',
+      sdkInt: (map['sdkInt'] as num?)?.toInt() ?? 31,
+      totalRamGB: (map['totalRamGB'] as num?)?.toDouble() ?? 8.0,
+      isQualified: map['isQualified'] as bool? ?? false,
       activeBackend: map['activeBackend'] as String? ?? 'CPU',
       isModelLoaded: map['isModelLoaded'] as bool? ?? false,
       loadedModelPath: map['loadedModelPath'] as String? ?? '',
@@ -39,10 +57,12 @@ class GemmaMediaPipeService {
   static const MethodChannel _channel = MethodChannel('com.glance.app/gemma_native');
 
   bool _isInitialized = false;
+  bool _isGenerating = false;
   GemmaHardwareInfo? _hardwareInfo;
   Completer<bool>? _initCompleter;
 
   bool get isInitialized => _isInitialized;
+  bool get isGenerating => _isGenerating;
   GemmaHardwareInfo? get hardwareInfo => _hardwareInfo;
 
   /// Fetches current hardware GPU vs CPU status from native Kotlin.
@@ -68,6 +88,14 @@ class GemmaMediaPipeService {
 
   /// Initializes Gemma .task model with preferred backend ('GPU', 'CPU', or 'AUTO').
   Future<bool> initModel({String? customModelPath, String preferredBackend = 'AUTO'}) async {
+    // 0. If model is already loaded in RAM, do not reload it!
+    final hw = await fetchHardwareInfo();
+    if (hw.isModelLoaded) {
+      debugPrint('[GemmaMediaPipeService] Model is already loaded in memory (${hw.activeBackend}). Skipping reload.');
+      _isInitialized = true;
+      return true;
+    }
+
     // If an initialization is already ongoing, await that single instance
     if (_initCompleter != null) {
       debugPrint('[GemmaMediaPipeService] Model initialization already running, awaiting existing task.');
@@ -87,6 +115,14 @@ class GemmaMediaPipeService {
       String modelPath = (customModelPath != null && customModelPath.trim().isNotEmpty)
           ? customModelPath.trim()
           : (prefs.getString('gemma_last_model_path') ?? '').trim();
+
+      // If no stored path or not existing, auto-resolve from disk
+      if (modelPath.isEmpty || !File(modelPath).existsSync()) {
+        final resolved = await resolveModelPath();
+        if (resolved != null && resolved.isNotEmpty) {
+          modelPath = resolved;
+        }
+      }
 
       if (modelPath.isEmpty || !File(modelPath).existsSync()) {
         final docDir = await getApplicationDocumentsDirectory();
@@ -161,6 +197,7 @@ class GemmaMediaPipeService {
 
   /// Executes text inference with MediaPipe Gemma LLM.
   Future<String> generateText(String prompt) async {
+    _isGenerating = true;
     try {
       final String response = await _channel.invokeMethod('generateText', {
         'prompt': prompt,
@@ -169,20 +206,25 @@ class GemmaMediaPipeService {
     } catch (e) {
       debugPrint('[GemmaMediaPipeService] Text generation error: $e');
       return 'Error: $e';
+    } finally {
+      _isGenerating = false;
     }
   }
 
   /// Executes multimodal vision inference with MediaPipe Gemma LLM.
   Future<String> generateVision({required String imagePath, required String prompt}) async {
+    _isGenerating = true;
     try {
       final String response = await _channel.invokeMethod('generateVision', {
         'imagePath': imagePath,
-        'prompt': prompt,
+      'prompt': prompt,
       }) ?? '';
       return response;
     } catch (e) {
       debugPrint('[GemmaMediaPipeService] Vision generation error: $e');
       return 'Error: $e';
+    } finally {
+      _isGenerating = false;
     }
   }
 

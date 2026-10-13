@@ -9,6 +9,7 @@ import 'package:archive/archive.dart';
 import 'package:intl/intl.dart';
 import 'package:shimmer/shimmer.dart';
 import '../../core/models/memory_models.dart';
+import '../../core/services/smart_entity_service.dart';
 import 'widgets/related_memories_carousel.dart';
 
 class SmartEntity {
@@ -33,7 +34,6 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
 
   int _selectedPageIndex = 0;
   bool _isLoadingPreview = true;
-  bool _isTextExpanded = false;
 
   String? _extractedPdfText;
   String? _fileSizeStr;
@@ -281,8 +281,10 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
         try {
           final document = PdfDocument(inputBytes: bytes);
           _pageCount = document.pages.count;
+          final pageCount = _pageCount ?? document.pages.count;
           final textExtractor = PdfTextExtractor(document);
-          extractedText = textExtractor.extractText();
+          final maxPage = pageCount > 3 ? 2 : (pageCount > 0 ? pageCount - 1 : 0);
+          extractedText = textExtractor.extractText(startPageIndex: 0, endPageIndex: maxPage);
           document.dispose();
         } catch (_) {}
 
@@ -371,9 +373,12 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
         }
 
         try {
+          final sampleText = finalText.length > 2000 ? finalText.substring(0, 2000) : finalText;
           final entityExtractor =
               EntityExtractor(language: EntityExtractorLanguage.english);
-          final rawEntities = await entityExtractor.annotateText(finalText);
+          final rawEntities = await entityExtractor
+              .annotateText(sampleText)
+              .timeout(const Duration(seconds: 2), onTimeout: () => []);
           entityExtractor.close();
 
           for (final annotation in rawEntities) {
@@ -401,6 +406,15 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
           _entities = validEntities;
           _isLoadingPreview = false;
         });
+
+        // Push extracted entities to SQLite so search & RAG can query them
+        if (validEntities.isNotEmpty) {
+          try {
+            SmartEntityService.instance.enrichMemoryWithEntities(
+              widget.memory.copyWith(content: finalText),
+            );
+          } catch (_) {}
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -910,20 +924,6 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
                       ),
                     ],
 
-                    const SizedBox(height: 28),
-
-                    // ==========================================
-                    // EXTRACTED TEXT (COLLAPSIBLE DISCLOSURE)
-                    // ==========================================
-                    _buildCollapsibleTextSection(
-                      context: context,
-                      isDark: isDark,
-                      cardColor: cardColor,
-                      textColor: textColor,
-                      textSecondary: textSecondary,
-                      primaryColor: primaryColor,
-                    ),
-
                     const SizedBox(height: 32),
 
                     // ==========================================
@@ -1218,137 +1218,5 @@ class _DocumentDetailScreenState extends State<DocumentDetailScreen> {
     );
   }
 
-  Widget _buildCollapsibleTextSection({
-    required BuildContext context,
-    required bool isDark,
-    required Color cardColor,
-    required Color textColor,
-    required Color textSecondary,
-    required Color primaryColor,
-  }) {
-    final text = _extractedPdfText ?? widget.memory.content;
-    final hasText = text.trim().isNotEmpty &&
-        text != "No readable text found in this document.";
-
-    return Container(
-      decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: isDark ? const Color(0xFF2E3238) : const Color(0xFFE2E8F0),
-        ),
-      ),
-      child: Column(
-        children: [
-          ListTile(
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 20,
-              vertical: 8,
-            ),
-            leading: Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: primaryColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(Icons.subject_rounded, color: primaryColor, size: 20),
-            ),
-            title: Text(
-              'Extracted Document Text',
-              style: TextStyle(
-                fontFamily: 'DMSans',
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-                color: textColor,
-              ),
-            ),
-            subtitle: Text(
-              hasText ? '${text.length} characters extracted' : 'No text available',
-              style: TextStyle(fontSize: 12, color: textSecondary),
-            ),
-            trailing: IconButton(
-              icon: Icon(
-                _isTextExpanded
-                    ? Icons.keyboard_arrow_up_rounded
-                    : Icons.keyboard_arrow_down_rounded,
-                color: textColor,
-              ),
-              onPressed: () => setState(() => _isTextExpanded = !_isTextExpanded),
-            ),
-            onTap: () => setState(() => _isTextExpanded = !_isTextExpanded),
-          ),
-
-          if (_isTextExpanded) ...[
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(20.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton.icon(
-                        style: TextButton.styleFrom(
-                          foregroundColor: primaryColor,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                        ),
-                        onPressed: () {
-                          Clipboard.setData(ClipboardData(text: text));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: const Text(
-                                'Text copied to clipboard',
-                                style: TextStyle(fontFamily: 'DMSans'),
-                              ),
-                              behavior: SnackBarBehavior.floating,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.copy_rounded, size: 16),
-                        label: const Text('Copy Text'),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: isDark
-                          ? const Color(0xFF141619)
-                          : const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: isDark
-                            ? const Color(0xFF262A30)
-                            : const Color(0xFFE2E8F0),
-                      ),
-                    ),
-                    constraints: const BoxConstraints(maxHeight: 280),
-                    child: SingleChildScrollView(
-                      child: SelectableText(
-                        text,
-                        style: TextStyle(
-                          fontSize: 13,
-                          height: 1.55,
-                          color: textColor.withValues(alpha: 0.85),
-                          fontFamily: 'DMSans',
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
 }
+

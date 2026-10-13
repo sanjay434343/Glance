@@ -27,6 +27,7 @@ class AboutSettingsPage extends StatelessWidget {
         title: Text(
           'About Glance',
           style: TextStyle(
+            fontFamily: 'DMSans',
             fontSize: 18,
             fontWeight: FontWeight.bold,
             color: textColor,
@@ -69,7 +70,7 @@ class AboutSettingsPage extends StatelessWidget {
               Text(
                 'Glance',
                 style: TextStyle(
-                  fontFamily: 'PlaywriteAR',
+                  fontFamily: 'DMSans',
                   fontSize: 26,
                   fontWeight: FontWeight.bold,
                   color: textColor,

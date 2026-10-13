@@ -346,6 +346,7 @@ class _AiModelSettingsPageState extends State<AiModelSettingsPage> {
         title: Text(
           'AI Engine & GPU',
           style: TextStyle(
+            fontFamily: 'DMSans',
             fontSize: 18,
             fontWeight: FontWeight.bold,
             color: textColor,

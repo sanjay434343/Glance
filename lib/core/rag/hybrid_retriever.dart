@@ -238,6 +238,43 @@ class HybridRetriever {
         }
         break;
 
+      case QueryIntent.entitySearch:
+        // Search specifically in memories containing extracted smart entities
+        dbResults = await db.searchMemoriesSmart(
+          keywords: analyzed.keywords.isNotEmpty ? analyzed.keywords : null,
+          startTime: analyzed.timeRange?.startTime,
+          endTime: analyzed.timeRange?.endTime,
+          limit: candidateLimit,
+        );
+        // Fallback: search across all text-carrying memories (notifications, docs, copied text)
+        if (dbResults.isEmpty) {
+          final allMems = await db.getAllMemories();
+          dbResults = allMems.where((m) =>
+            m.summary != null && (m.summary!.contains('OTP_PIN') ||
+                                   m.summary!.contains('PHONE') ||
+                                   m.summary!.contains('EMAIL') ||
+                                   m.summary!.contains('URL') ||
+                                   m.summary!.contains('ADDRESS'))
+          ).take(candidateLimit).toList();
+        }
+        break;
+
+      case QueryIntent.documentSearch:
+        dbResults = await db.searchMemoriesSmart(
+          type: 'document',
+          keywords: analyzed.keywords.isNotEmpty ? analyzed.keywords : null,
+          startTime: analyzed.timeRange?.startTime,
+          endTime: analyzed.timeRange?.endTime,
+          limit: candidateLimit,
+        );
+        if (dbResults.isEmpty) {
+          dbResults = await db.searchMemoriesSmart(
+            keywords: analyzed.keywords.isNotEmpty ? analyzed.keywords : ['pdf', 'document'],
+            limit: candidateLimit,
+          );
+        }
+        break;
+
       case QueryIntent.notificationSearch:
         dbResults = await db.searchMemoriesSmart(
           type: 'notification',
@@ -570,14 +607,33 @@ class HybridRetriever {
       score += 0.45;
     }
 
+    // Boost memories containing smart entities for entity queries
+    if (analyzed.intent == QueryIntent.entitySearch) {
+      final summaryLower = (mem.summary ?? '').toLowerCase();
+      for (final kw in analyzed.keywords) {
+        if (summaryLower.contains(kw.toLowerCase())) {
+          score += 0.45;
+          break;
+        }
+      }
+    }
+
+    // Boost document memories for document queries
+    if (analyzed.intent == QueryIntent.documentSearch) {
+      final t = mem.type.toLowerCase();
+      if (t == 'pdf' || t == 'document' || t == 'file') {
+        score += 0.40;
+      }
+    }
+
     for (final kw in analyzed.keywords) {
       final kwLower = kw.toLowerCase();
       if (mem.content.toLowerCase().contains(kwLower)) score += 0.15;
       if (mem.title.toLowerCase().contains(kwLower)) score += 0.15;
       
-      // Boost score if keyword matches a generated tag
+      // Boost score if keyword matches a generated tag or smart entity
       if (tags.any((t) => t.contains(kwLower))) {
-        score += 0.25;
+        score += 0.35;
       }
     }
 

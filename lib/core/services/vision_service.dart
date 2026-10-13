@@ -8,6 +8,7 @@ import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart
 
 import '../database/glance_db.dart';
 import 'gemma_mediapipe_service.dart';
+import 'model_download_service.dart';
 import 'image_compression_service.dart';
 import 'document_extraction_service.dart';
 
@@ -80,7 +81,15 @@ class VisionQueueStatus {
 /// screenshots/photos, and auto-persisting vision metadata to SQLite.
 class VisionService {
   static final VisionService instance = VisionService._internal();
-  VisionService._internal();
+  VisionService._internal() {
+    // Automatically resume vision processing once downloading finishes
+    ModelDownloadService.instance.progressStream.listen((progress) {
+      if (progress.isCompleted) {
+        debugPrint('[VisionService] Model download finished. Resuming vision queue.');
+        _processNextQueueItem();
+      }
+    });
+  }
 
   bool _isInitializing = false;
   bool _isReady = false;
@@ -104,6 +113,14 @@ class VisionService {
   Future<bool> initialize() async {
     if (_isReady) return true;
     if (_isInitializing) return false;
+
+    // Do not stress CPU/GPU if model download is currently running
+    final isDownloadingModel = ModelDownloadService.instance.currentProgress?.isDownloading ?? false;
+    if (isDownloadingModel) {
+      debugPrint('[VisionService] Model download in progress. Skipping vision initialization.');
+      _notifyStatus("Paused during download");
+      return false;
+    }
 
     _isInitializing = true;
     _initError = null;
@@ -161,12 +178,10 @@ class VisionService {
                 filePath.endsWith('.webp'));
 
         if (isImage) {
-          final isStalePrompt = (mem.summary != null && mem.summary!.contains('04 18')) ||
-              (mem.content.contains('04 18') && mem.content.contains('Monday 25'));
-          if ((!mem.isProcessed || isStalePrompt) &&
+          if (!mem.isProcessed &&
               !_processedMemoryIds.contains(mem.id) &&
               !_processedImagePaths.contains(filePath)) {
-            enqueue(memoryId: mem.id, imagePath: filePath, force: isStalePrompt);
+            enqueue(memoryId: mem.id, imagePath: filePath);
             enqueuedCount++;
           } else {
             _processedMemoryIds.add(mem.id);
@@ -287,6 +302,14 @@ class VisionService {
 
   Future<void> _processNextQueueItem() async {
     if (_isProcessingQueue || _queue.isEmpty) return;
+
+    // Check if model download is in progress: Do not stress CPU/GPU during downloading!
+    final isDownloadingModel = ModelDownloadService.instance.currentProgress?.isDownloading ?? false;
+    if (isDownloadingModel) {
+      debugPrint('[VisionService] Model download in progress. Pausing vision queue to conserve CPU/GPU.');
+      _notifyStatus("Paused (Model Downloading)");
+      return;
+    }
 
     _isProcessingQueue = true;
     const batchSize = 10;

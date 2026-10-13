@@ -36,7 +36,11 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   bool _isAiGenerating = false;
   StreamSubscription<String>? _aiSubscription;
 
-  // Results
+  // Results with 20-batch lazy loading
+  static const int _batchSize = 20;
+  int _displayedResultsCount = _batchSize;
+  bool _isLoadingMoreResults = false;
+  late final ScrollController _resultsScrollController;
   List<RetrievalCandidate> _allCandidates = [];
   List<RetrievalCandidate> _filteredCandidates = [];
 
@@ -62,6 +66,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   @override
   void initState() {
     super.initState();
+    _resultsScrollController = ScrollController();
+    _resultsScrollController.addListener(_onResultsScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       // Give the Hero animation time to glide the bar into the bottom island
       Future.delayed(const Duration(milliseconds: 320), () {
@@ -77,9 +83,31 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   void dispose() {
     _debounceTimer?.cancel();
     _aiSubscription?.cancel();
+    _resultsScrollController.removeListener(_onResultsScroll);
+    _resultsScrollController.dispose();
     _controller.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _onResultsScroll() {
+    if (_resultsScrollController.position.pixels >=
+        _resultsScrollController.position.maxScrollExtent - 250) {
+      if (!_isLoadingMoreResults &&
+          _displayedResultsCount < _filteredCandidates.length) {
+        setState(() {
+          _isLoadingMoreResults = true;
+        });
+        Future.delayed(const Duration(milliseconds: 250), () {
+          if (mounted) {
+            setState(() {
+              _displayedResultsCount += _batchSize;
+              _isLoadingMoreResults = false;
+            });
+          }
+        });
+      }
+    }
   }
 
   void _onCategorySelected(String category) {
@@ -90,6 +118,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   void _applyCategoryFilter() {
+    _displayedResultsCount = _batchSize;
     if (_selectedCategory == 'All') {
       _filteredCandidates = List.from(_allCandidates);
       return;
@@ -131,6 +160,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     setState(() {
       _isSearching = true;
       _currentQuery = trimmed;
+      _displayedResultsCount = _batchSize;
       _allCandidates = [];
       _filteredCandidates = [];
       _aiResponse = null;
@@ -140,8 +170,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final retriever = ref.read(hybridRetrieverProvider);
     final candidates = await retriever.retrieve(
       userQuery: trimmed,
-      candidateLimit: 500,
-      finalLimit: 250,
+      candidateLimit: 120,
+      finalLimit: 50,
     );
 
     if (mounted) {
@@ -521,6 +551,8 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     final isLoading = _isSearching || _isAiGenerating;
 
     return ListView(
+      controller: _resultsScrollController,
+      physics: const BouncingScrollPhysics(),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       children: [
         // ── Direct AI Screen Response (No Card Container) ─────────────────
@@ -822,37 +854,63 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
               ],
             ),
           )
-        else
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              crossAxisSpacing: 6,
-              mainAxisSpacing: 8,
-              childAspectRatio: 0.85,
-            ),
-            itemCount: _filteredCandidates.length,
-            itemBuilder: (context, index) {
-              final candidate = _filteredCandidates[index];
-              final mem = candidate.memory;
-              return _PopInAnimatedCard(
-                key: ValueKey('${mem.id}_$index'),
-                index: index,
-                child: SmartCollectionCard(
-                  height: null,
-                  imageHeight: 74,
-                  image: _buildMemoryPreview(mem, isDark),
-                  title: _getCleanTitle(mem),
-                  itemsCount: _formatRelativeTime(
-                    DateTime.fromMillisecondsSinceEpoch(mem.capturedAt),
+        else ...[
+          Builder(
+            builder: (context) {
+              final visibleCandidates = _filteredCandidates.take(_displayedResultsCount).toList();
+              final hasMore = _displayedResultsCount < _filteredCandidates.length;
+
+              return Column(
+                children: [
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      crossAxisSpacing: 6,
+                      mainAxisSpacing: 8,
+                      childAspectRatio: 0.85,
+                    ),
+                    itemCount: visibleCandidates.length,
+                    itemBuilder: (context, index) {
+                      final candidate = visibleCandidates[index];
+                      final mem = candidate.memory;
+                      return _PopInAnimatedCard(
+                        key: ValueKey('${mem.id}_$index'),
+                        index: index,
+                        child: SmartCollectionCard(
+                          height: null,
+                          imageHeight: 74,
+                          image: _buildMemoryPreview(mem, isDark),
+                          title: _getCleanTitle(mem),
+                          itemsCount: _formatRelativeTime(
+                            DateTime.fromMillisecondsSinceEpoch(mem.capturedAt),
+                          ),
+                          isDark: isDark,
+                          onTap: () => DetailRouter.openDetailScreen(context, mem),
+                        ),
+                      );
+                    },
                   ),
-                  isDark: isDark,
-                  onTap: () => DetailRouter.openDetailScreen(context, mem),
-                ),
+                  if (hasMore) ...[
+                    const SizedBox(height: 20),
+                    Center(
+                      child: SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.2,
+                          color: primaryColor.withValues(alpha: 0.65),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ],
               );
             },
           ),
+        ],
       ],
     );
   }

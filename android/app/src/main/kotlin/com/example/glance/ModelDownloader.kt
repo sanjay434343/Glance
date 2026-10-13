@@ -10,24 +10,32 @@ import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.flutter.plugin.common.EventChannel
-import java.io.BufferedInputStream
-import java.io.BufferedOutputStream
 import java.io.File
-import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
- * High-speed, resumable background model downloader implemented in pure Kotlin.
- * Streams directly to disk with large 256KB buffer, automatic redirect handling,
- * live foreground notification with percentage, total size, download size & speed,
- * and throttled, zero-overhead progress reporting to Flutter.
+ * High-Speed Multi-Threaded Resumable Model Downloader.
+ *
+ * Supports:
+ * - Resuming from existing `.downloading` file using state metadata (`.downloading.meta`).
+ * - Partitioning remaining bytes across 4 parallel threads using HTTP Range requests.
+ * - Single-stream fallback with `Range: bytes=X-` resume if chunking is not available.
+ * - Atomic rename to target file upon 100% completion.
  */
 class ModelDownloader(private val context: Context? = null) : EventChannel.StreamHandler {
 
     companion object {
         private const val NOTIFICATION_CHANNEL_ID = "glance_model_download_channel"
         private const val NOTIFICATION_ID = 4099
+        private const val NUM_THREADS = 4
     }
 
     private var eventSink: EventChannel.EventSink? = null
@@ -36,11 +44,9 @@ class ModelDownloader(private val context: Context? = null) : EventChannel.Strea
     @Volatile
     private var isDownloading = false
 
-    @Volatile
-    private var isCancelled = false
-
-    private var activeConnection: HttpURLConnection? = null
-    private var downloadThread: Thread? = null
+    private val isCancelled = AtomicBoolean(false)
+    private var executorService = Executors.newFixedThreadPool(NUM_THREADS + 1)
+    private val activeFutures = mutableListOf<Future<*>>()
 
     init {
         createNotificationChannel()
@@ -93,47 +99,38 @@ class ModelDownloader(private val context: Context? = null) : EventChannel.Strea
                 )
             }
 
-            val maxProgress = 100
-            val indeterminate = totalBytes <= 0L
-
             val builder = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle("Downloading AI Model ($percent%)")
+                .setContentTitle("Downloading AI Model")
                 .setContentText(text)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
+                .setProgress(100, percent, totalBytes <= 0L)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setProgress(maxProgress, percent.coerceIn(0, 100), indeterminate)
 
             getNotificationManager()?.notify(NOTIFICATION_ID, builder.build())
-        } catch (e: Exception) {
-            Log.e("ModelDownloader", "Failed to update notification: ${e.message}")
-        }
+        } catch (_: Exception) {}
     }
 
-    private fun showDownloadCompleteNotification(destPath: String, totalBytes: Long) {
+    private fun cancelDownloadNotification() {
+        try {
+            getNotificationManager()?.cancel(NOTIFICATION_ID)
+        } catch (_: Exception) {}
+    }
+
+    private fun showDownloadCompleteNotification(filePath: String, sizeBytes: Long) {
         if (context == null) return
         try {
-            val totalMB = totalBytes.toDouble() / (1024.0 * 1024.0)
-            val fileName = File(destPath).name
+            val sizeMB = sizeBytes.toDouble() / (1024.0 * 1024.0)
             val builder = NotificationCompat.Builder(context, NOTIFICATION_CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle("Model Download Complete")
-                .setContentText(String.format(java.util.Locale.US, "$fileName (%.1f MB) ready for AI reasoning", totalMB))
+                .setContentTitle("AI Model Download Complete")
+                .setContentText(String.format(java.util.Locale.US, "Gemma Model ready (%.1f MB)", sizeMB))
                 .setOngoing(false)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
 
             getNotificationManager()?.notify(NOTIFICATION_ID, builder.build())
-        } catch (e: Exception) {
-            Log.e("ModelDownloader", "Failed to show complete notification: ${e.message}")
-        }
-    }
-
-    private fun cancelDownloadNotification() {
-        if (context == null) return
-        try {
-            getNotificationManager()?.cancel(NOTIFICATION_ID)
         } catch (_: Exception) {}
     }
 
@@ -145,9 +142,6 @@ class ModelDownloader(private val context: Context? = null) : EventChannel.Strea
         this.eventSink = null
     }
 
-    /**
-     * Starts native high-speed download in a dedicated background worker thread.
-     */
     fun startDownload(downloadUrl: String, destinationPath: String): Boolean {
         if (isDownloading) {
             Log.w("ModelDownloader", "Download already in progress.")
@@ -155,35 +149,110 @@ class ModelDownloader(private val context: Context? = null) : EventChannel.Strea
         }
 
         isDownloading = true
-        isCancelled = false
+        isCancelled.set(false)
 
-        downloadThread = Thread {
-            runDownload(downloadUrl, destinationPath)
-        }.apply {
-            name = "ModelDownloadWorker"
-            priority = Thread.MAX_PRIORITY
-            start()
+        executorService.execute {
+            runResumableDownload(downloadUrl, destinationPath)
         }
 
         return true
     }
 
-    /**
-     * Cancels any running download immediately.
-     */
     fun cancelDownload(): Boolean {
         if (!isDownloading) return false
-        isCancelled = true
-        try {
-            activeConnection?.disconnect()
-        } catch (_: Exception) {}
+        isCancelled.set(true)
+        synchronized(activeFutures) {
+            for (f in activeFutures) {
+                f.cancel(true)
+            }
+            activeFutures.clear()
+        }
         isDownloading = false
         cancelDownloadNotification()
         postProgress("cancelled", 0L, 0L, 0.0, 0L, "Download cancelled by user")
         return true
     }
 
-    private fun runDownload(initialUrl: String, destinationPath: String) {
+    private fun resolveFinalUrlAndContentLength(initialUrl: String): Pair<String, Long> {
+        var currentUrl = initialUrl
+        var redirects = 0
+        val maxRedirects = 10
+
+        while (redirects < maxRedirects) {
+            val urlObj = URL(currentUrl)
+            val connection = (urlObj.openConnection() as HttpURLConnection).apply {
+                requestMethod = "HEAD"
+                connectTimeout = 30000
+                readTimeout = 30000
+                instanceFollowRedirects = false
+                setRequestProperty("User-Agent", "Glance-ModelDownloader/2.0 (Android; Resumable)")
+            }
+
+            connection.connect()
+            val code = connection.responseCode
+
+            if (code in 300..399) {
+                val loc = connection.getHeaderField("Location")
+                connection.disconnect()
+                if (!loc.isNullOrBlank()) {
+                    currentUrl = if (loc.startsWith("http")) loc else URL(urlObj, loc).toString()
+                    redirects++
+                    continue
+                }
+            }
+
+            val length = connection.contentLengthLong
+            connection.disconnect()
+            return Pair(currentUrl, length)
+        }
+
+        return Pair(currentUrl, -1L)
+    }
+
+    data class ChunkInfo(val index: Int, val start: Long, var current: Long, val end: Long)
+
+    private fun loadMeta(metaFile: File): List<ChunkInfo>? {
+        if (!metaFile.exists()) return null
+        return try {
+            val json = JSONObject(metaFile.readText())
+            val arr = json.getJSONArray("chunks")
+            val list = mutableListOf<ChunkInfo>()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                list.add(
+                    ChunkInfo(
+                        obj.getInt("index"),
+                        obj.getLong("start"),
+                        obj.getLong("current"),
+                        obj.getLong("end")
+                    )
+                )
+            }
+            list
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun saveMeta(metaFile: File, totalBytes: Long, chunks: List<ChunkInfo>) {
+        try {
+            val root = JSONObject()
+            root.put("totalBytes", totalBytes)
+            val arr = JSONArray()
+            for (c in chunks) {
+                val obj = JSONObject()
+                obj.put("index", c.index)
+                obj.put("start", c.start)
+                obj.put("current", c.current)
+                obj.put("end", c.end)
+                arr.put(obj)
+            }
+            root.put("chunks", arr)
+            metaFile.writeText(root.toString())
+        } catch (_: Exception) {}
+    }
+
+    private fun runResumableDownload(initialUrl: String, destinationPath: String) {
         val destFile = File(destinationPath)
         val parentDir = destFile.parentFile
         if (parentDir != null && !parentDir.exists()) {
@@ -191,158 +260,260 @@ class ModelDownloader(private val context: Context? = null) : EventChannel.Strea
         }
 
         val partFile = File("$destinationPath.downloading")
-        var downloadedBytes = if (partFile.exists()) partFile.length() else 0L
-
-        var currentUrl = initialUrl
-        var redirects = 0
-        val maxRedirects = 10
+        val metaFile = File("$destinationPath.downloading.meta")
 
         try {
-            var connection: HttpURLConnection? = null
+            val (finalUrl, totalBytes) = resolveFinalUrlAndContentLength(initialUrl)
+            Log.i("ModelDownloader", "Connecting -> URL: $finalUrl, Total Content Length: $totalBytes bytes")
 
-            // Handle HTTP 301, 302, 303, 307, 308 redirects (HuggingFace / S3 / CDNs)
-            while (redirects < maxRedirects) {
-                val urlObj = URL(currentUrl)
-                connection = (urlObj.openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 30000
-                    readTimeout = 60000
-                    instanceFollowRedirects = false
-                    setRequestProperty("User-Agent", "Glance-ModelDownloader/1.0 (Android)")
-                    setRequestProperty("Accept-Encoding", "identity") // Raw binary without gzip overhead
+            // If target file already exists and matches expected size, mark complete
+            if (destFile.exists() && (totalBytes <= 0 || destFile.length() == totalBytes)) {
+                isDownloading = false
+                showDownloadCompleteNotification(destFile.absolutePath, destFile.length())
+                postProgress("completed", destFile.length(), destFile.length(), 0.0, 0L, null)
+                return
+            }
 
-                    if (downloadedBytes > 0) {
-                        setRequestProperty("Range", "bytes=$downloadedBytes-")
-                    }
+            // Check if server doesn't provide Content-Length: use single-stream with partial resume
+            if (totalBytes <= 0L) {
+                runSingleStreamResume(finalUrl, partFile, destFile)
+                return
+            }
+
+            // Determine chunks (resume previous state if metadata is valid)
+            var chunks = loadMeta(metaFile)
+            val isMetaValid = chunks != null && chunks.size == NUM_THREADS &&
+                    partFile.exists() && partFile.length() == totalBytes
+
+            if (!isMetaValid) {
+                // Initialize clean chunks and pre-allocate file
+                val raf = RandomAccessFile(partFile, "rw")
+                raf.setLength(totalBytes)
+                raf.close()
+
+                val chunkSize = totalBytes / NUM_THREADS
+                val newChunks = mutableListOf<ChunkInfo>()
+                for (i in 0 until NUM_THREADS) {
+                    val s = i * chunkSize
+                    val e = if (i == NUM_THREADS - 1) totalBytes - 1 else (s + chunkSize - 1)
+                    newChunks.add(ChunkInfo(i, s, s, e))
                 }
-
-                connection.connect()
-                val responseCode = connection.responseCode
-
-                if (responseCode in 300..399) {
-                    val location = connection.getHeaderField("Location")
-                    connection.disconnect()
-                    if (!location.isNullOrBlank()) {
-                        currentUrl = if (location.startsWith("http")) location else URL(urlObj, location).toString()
-                        redirects++
-                        Log.d("ModelDownloader", "Redirecting ($responseCode) -> $currentUrl")
-                        continue
-                    }
-                }
-                break
+                chunks = newChunks
+                saveMeta(metaFile, totalBytes, chunks)
             }
 
-            if (connection == null) {
-                throw Exception("Failed to open connection to $initialUrl")
+            val validChunks = chunks!!
+
+            // Calculate already downloaded bytes across all chunks
+            var initialDownloaded = 0L
+            for (c in validChunks) {
+                initialDownloaded += (c.current - c.start)
             }
 
-            activeConnection = connection
-            val responseCode = connection.responseCode
-            val isPartial = (responseCode == HttpURLConnection.HTTP_PARTIAL)
+            val progressBytes = AtomicLong(initialDownloaded)
+            Log.i("ModelDownloader", "Resuming download at $initialDownloaded / $totalBytes bytes (${(initialDownloaded * 100 / totalBytes)}%)")
 
-            if (responseCode != HttpURLConnection.HTTP_OK && responseCode != HttpURLConnection.HTTP_PARTIAL) {
-                throw Exception("HTTP Error $responseCode: ${connection.responseMessage}")
-            }
+            postProgress("started", initialDownloaded, totalBytes, 0.0, 0L, null)
+            val initPct = ((initialDownloaded * 100) / totalBytes).toInt().coerceIn(0, 100)
+            updateDownloadNotification(initialDownloaded, totalBytes, 0.0, initPct)
 
-            val contentLength = connection.contentLengthLong
-            val totalBytes = if (isPartial) {
-                downloadedBytes + contentLength
-            } else {
-                downloadedBytes = 0L // Reset if server doesn't support partial range
-                contentLength
-            }
+            // Progress reporting loop
+            val progressTracker = executorService.submit {
+                var lastBytes = initialDownloaded
+                var lastTime = System.currentTimeMillis()
+                var smoothedSpeed = 0.0
+                var lastNotifTime = 0L
 
-            Log.i("ModelDownloader", "Starting high-speed stream to ${partFile.absolutePath}. Total size: $totalBytes bytes, resumeFrom: $downloadedBytes")
-
-            val inputStream = BufferedInputStream(connection.inputStream, 256 * 1024)
-            val outputStream = BufferedOutputStream(FileOutputStream(partFile, isPartial), 256 * 1024)
-
-            val buffer = ByteArray(256 * 1024) // 256 KB chunk buffer for maximum I/O throughput
-            var bytesRead: Int
-            var lastUpdateMs = System.currentTimeMillis()
-            var lastUpdateBytes = downloadedBytes
-            var smoothedSpeedMBps = 0.0
-
-            postProgress("started", downloadedBytes, totalBytes, 0.0, 0L, null)
-            val initialPercent = if (totalBytes > 0) ((downloadedBytes * 100) / totalBytes).toInt() else 0
-            updateDownloadNotification(downloadedBytes, totalBytes, 0.0, initialPercent)
-
-            var lastNotificationMs = 0L
-
-            while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                if (isCancelled) {
-                    outputStream.flush()
-                    outputStream.close()
-                    inputStream.close()
-                    cancelDownloadNotification()
-                    return
-                }
-
-                outputStream.write(buffer, 0, bytesRead)
-                downloadedBytes += bytesRead
-
-                val now = System.currentTimeMillis()
-                val deltaMs = now - lastUpdateMs
-                if (deltaMs >= 200) { // Throttle progress dispatch to every 200ms to preserve 120 FPS UI
-                    val deltaBytes = downloadedBytes - lastUpdateBytes
-                    val instantSpeedMBps = (deltaBytes.toDouble() / (1024.0 * 1024.0)) / (deltaMs.toDouble() / 1000.0)
-                    smoothedSpeedMBps = if (smoothedSpeedMBps == 0.0) instantSpeedMBps else (0.7 * smoothedSpeedMBps + 0.3 * instantSpeedMBps)
-
-                    val remainingBytes = totalBytes - downloadedBytes
-                    val etaSec = if (smoothedSpeedMBps > 0.05) {
-                        ((remainingBytes.toDouble() / (1024.0 * 1024.0)) / smoothedSpeedMBps).toLong()
-                    } else 0L
-
-                    val percent = if (totalBytes > 0) ((downloadedBytes * 100) / totalBytes).toInt() else 0
-                    postProgress("downloading", downloadedBytes, totalBytes, smoothedSpeedMBps, etaSec, null)
-
-                    // Update live notification every 1000ms
-                    if (now - lastNotificationMs >= 1000) {
-                        updateDownloadNotification(downloadedBytes, totalBytes, smoothedSpeedMBps, percent)
-                        lastNotificationMs = now
+                while (!isCancelled.get() && isDownloading) {
+                    try {
+                        Thread.sleep(250)
+                    } catch (_: InterruptedException) {
+                        break
                     }
 
-                    lastUpdateMs = now
-                    lastUpdateBytes = downloadedBytes
+                    val now = System.currentTimeMillis()
+                    val currentDownloaded = progressBytes.get()
+                    val deltaBytes = currentDownloaded - lastBytes
+                    val deltaMs = now - lastTime
+
+                    if (deltaMs > 0) {
+                        val instantSpeed = (deltaBytes.toDouble() / (1024.0 * 1024.0)) / (deltaMs.toDouble() / 1000.0)
+                        smoothedSpeed = if (smoothedSpeed == 0.0) instantSpeed else (0.7 * smoothedSpeed + 0.3 * instantSpeed)
+
+                        val remaining = (totalBytes - currentDownloaded).coerceAtLeast(0L)
+                        val etaSec = if (smoothedSpeed > 0.05) {
+                            ((remaining.toDouble() / (1024.0 * 1024.0)) / smoothedSpeed).toLong()
+                        } else 0L
+
+                        val percent = ((currentDownloaded * 100) / totalBytes).toInt().coerceIn(0, 100)
+                        postProgress("downloading", currentDownloaded, totalBytes, smoothedSpeed, etaSec, null)
+
+                        if (now - lastNotifTime >= 1000) {
+                            updateDownloadNotification(currentDownloaded, totalBytes, smoothedSpeed, percent)
+                            lastNotifTime = now
+                            saveMeta(metaFile, totalBytes, validChunks)
+                        }
+
+                        lastBytes = currentDownloaded
+                        lastTime = now
+                    }
+
+                    if (currentDownloaded >= totalBytes) {
+                        break
+                    }
                 }
             }
 
-            outputStream.flush()
-            outputStream.close()
-            inputStream.close()
+            // Launch workers for unfinished chunks
+            val futures = mutableListOf<Future<*>>()
+            for (chunk in validChunks) {
+                if (chunk.current <= chunk.end) {
+                    val worker = executorService.submit {
+                        downloadChunk(finalUrl, partFile, chunk, progressBytes)
+                    }
+                    futures.add(worker)
+                }
+            }
 
-            if (isCancelled) {
+            synchronized(activeFutures) {
+                activeFutures.clear()
+                activeFutures.addAll(futures)
+            }
+
+            for (f in futures) {
+                f.get()
+            }
+            progressTracker.cancel(true)
+
+            if (isCancelled.get()) {
+                saveMeta(metaFile, totalBytes, validChunks)
                 cancelDownloadNotification()
                 return
             }
 
-            // Atomic rename from .downloading to destination file
+            // Download completed: remove metafile and atomically rename
+            if (metaFile.exists()) {
+                metaFile.delete()
+            }
             if (destFile.exists()) {
                 destFile.delete()
             }
-
             val renamed = partFile.renameTo(destFile)
             if (!renamed) {
-                // Fallback copy if rename fails across mount points
                 partFile.copyTo(destFile, overwrite = true)
                 partFile.delete()
             }
 
-            Log.i("ModelDownloader", "Download complete: ${destFile.absolutePath} (${destFile.length()} bytes)")
+            Log.i("ModelDownloader", "Resumed model download completed successfully! Size: ${destFile.length()} bytes")
             isDownloading = false
             showDownloadCompleteNotification(destFile.absolutePath, destFile.length())
             postProgress("completed", destFile.length(), destFile.length(), 0.0, 0L, null)
 
         } catch (e: Exception) {
-            if (!isCancelled) {
-                Log.e("ModelDownloader", "Download failed: ${e.message}", e)
+            if (!isCancelled.get()) {
+                Log.e("ModelDownloader", "Download error: ${e.message}", e)
                 isDownloading = false
                 cancelDownloadNotification()
-                postProgress("error", downloadedBytes, 0L, 0.0, 0L, e.message ?: "Download failed")
+                postProgress("error", 0L, 0L, 0.0, 0L, e.message ?: "Download failed")
             }
         } finally {
-            activeConnection?.disconnect()
-            activeConnection = null
             isDownloading = false
+        }
+    }
+
+    private fun downloadChunk(
+        urlStr: String,
+        file: File,
+        chunk: ChunkInfo,
+        progressCounter: AtomicLong
+    ) {
+        val startByte = chunk.current
+        val endByte = chunk.end
+        if (startByte > endByte) return
+
+        val url = URL(urlStr)
+        val connection = (url.openConnection() as HttpURLConnection).apply {
+            connectTimeout = 30000
+            readTimeout = 45000
+            setRequestProperty("User-Agent", "Glance-ModelDownloader/2.0 (Android; Resumable)")
+            setRequestProperty("Range", "bytes=$startByte-$endByte")
+        }
+
+        connection.connect()
+        val responseCode = connection.responseCode
+        if (responseCode != HttpURLConnection.HTTP_PARTIAL && responseCode != HttpURLConnection.HTTP_OK) {
+            throw Exception("Chunk ${chunk.index} ($startByte-$endByte) HTTP $responseCode")
+        }
+
+        val raf = RandomAccessFile(file, "rw")
+        raf.seek(startByte)
+
+        val input = connection.inputStream.buffered(128 * 1024)
+        val buffer = ByteArray(128 * 1024)
+        var bytesRead: Int
+
+        try {
+            while (input.read(buffer).also { bytesRead = it } != -1) {
+                if (isCancelled.get()) break
+                raf.write(buffer, 0, bytesRead)
+                chunk.current += bytesRead
+                progressCounter.addAndGet(bytesRead.toLong())
+            }
+        } finally {
+            try { input.close() } catch (_: Exception) {}
+            try { raf.close() } catch (_: Exception) {}
+            try { connection.disconnect() } catch (_: Exception) {}
+        }
+    }
+
+    private fun runSingleStreamResume(
+        urlStr: String,
+        partFile: File,
+        destFile: File
+    ) {
+        var downloaded = if (partFile.exists()) partFile.length() else 0L
+        val url = URL(urlStr)
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            connectTimeout = 30000
+            readTimeout = 60000
+            setRequestProperty("User-Agent", "Glance-ModelDownloader/2.0 (Android; Resumable)")
+            if (downloaded > 0) {
+                setRequestProperty("Range", "bytes=$downloaded-")
+            }
+        }
+        conn.connect()
+
+        val isPartial = (conn.responseCode == HttpURLConnection.HTTP_PARTIAL)
+        val totalBytes = if (isPartial) downloaded + conn.contentLengthLong else conn.contentLengthLong
+        if (!isPartial) downloaded = 0L
+
+        val input = conn.inputStream.buffered(256 * 1024)
+        val output = partFile.outputStream().buffered(256 * 1024)
+        val buf = ByteArray(256 * 1024)
+        var bytesRead: Int
+
+        try {
+            while (input.read(buf).also { bytesRead = it } != -1) {
+                if (isCancelled.get()) break
+                output.write(buf, 0, bytesRead)
+                downloaded += bytesRead
+                val pct = if (totalBytes > 0) ((downloaded * 100) / totalBytes).toInt().coerceIn(0, 100) else 0
+                postProgress("downloading", downloaded, totalBytes, 0.0, 0L, null)
+                updateDownloadNotification(downloaded, totalBytes, 0.0, pct)
+            }
+            output.flush()
+        } finally {
+            output.close()
+            input.close()
+            conn.disconnect()
+        }
+
+        if (!isCancelled.get()) {
+            if (destFile.exists()) destFile.delete()
+            partFile.renameTo(destFile)
+            isDownloading = false
+            showDownloadCompleteNotification(destFile.absolutePath, destFile.length())
+            postProgress("completed", destFile.length(), destFile.length(), 0.0, 0L, null)
         }
     }
 
