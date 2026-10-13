@@ -63,9 +63,9 @@ Ever remember reading a crucial note, seeing an address in a screenshot, or copy
 <td align="center"><b>🗂️ Collection</b></td>
 </tr>
 <tr>
-<td><img src="flutter_03.png" width="230" style="border-radius:18px"/></td>
-<td><img src="flutter_06.png" width="230" style="border-radius:18px"/></td>
-<td><img src="flutter_05.png" width="230" style="border-radius:18px"/></td>
+<td><img src="assets/images/home.png" width="230" style="border-radius:18px"/></td>
+<td><img src="assets/images/timeline.png" width="230" style="border-radius:18px"/></td>
+<td><img src="assets/images/collection.png" width="230" style="border-radius:18px"/></td>
 </tr>
 <tr>
 <td align="center"><b>⚙️ Settings</b></td>
@@ -73,9 +73,9 @@ Ever remember reading a crucial note, seeing an address in a screenshot, or copy
 <td align="center"><b>🔍 Search & AI Model</b></td>
 </tr>
 <tr>
-<td><img src="flutter_01.png" width="230" style="border-radius:18px"/></td>
-<td><img src="flutter_04.png" width="230" style="border-radius:18px"/></td>
-<td><img src="flutter_02.png" width="230" style="border-radius:18px"/></td>
+<td><img src="assets/images/settings.png" width="230" style="border-radius:18px"/></td>
+<td><img src="assets/images/capture.png" width="230" style="border-radius:18px"/></td>
+<td><img src="assets/images/search.png" width="230" style="border-radius:18px"/></td>
 </tr>
 </table>
 </div>
