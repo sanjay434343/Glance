@@ -58,24 +58,24 @@ Ever remember reading a crucial note, seeing an address in a screenshot, or copy
 <div align="center">
 <table>
 <tr>
-<td align="center"><b>🏠 Home Activity Feed</b></td>
-<td align="center"><b>📥 In-App AI Downloader</b></td>
-<td align="center"><b>⚙️ On-Device GPU & Model Setup</b></td>
+<td align="center"><b>🏠 Home</b></td>
+<td align="center"><b>⏱️ Timeline</b></td>
+<td align="center"><b>🗂️ Collection</b></td>
 </tr>
 <tr>
 <td><img src="flutter_03.png" width="230" style="border-radius:18px"/></td>
-<td><img src="flutter_02.png" width="230" style="border-radius:18px"/></td>
-<td><img src="flutter_01.png" width="230" style="border-radius:18px"/></td>
-</tr>
-<tr>
-<td align="center"><b>⏱️ Chronological Timeline</b></td>
-<td align="center"><b>🗂️ Smart Categorized Collections</b></td>
-<td align="center"><b>📄 Document & OCR Intelligence</b></td>
-</tr>
-<tr>
 <td><img src="flutter_06.png" width="230" style="border-radius:18px"/></td>
 <td><img src="flutter_05.png" width="230" style="border-radius:18px"/></td>
+</tr>
+<tr>
+<td align="center"><b>⚙️ Settings</b></td>
+<td align="center"><b>➕ Capture</b></td>
+<td align="center"><b>🔍 Search & AI Model</b></td>
+</tr>
+<tr>
+<td><img src="flutter_01.png" width="230" style="border-radius:18px"/></td>
 <td><img src="flutter_04.png" width="230" style="border-radius:18px"/></td>
+<td><img src="flutter_02.png" width="230" style="border-radius:18px"/></td>
 </tr>
 </table>
 </div>
