@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/images/logo_card.png" alt="Glance Logo" width="130" height="130"/>
+<img src="assets/images/logo.png" alt="Glance Logo" width="130" height="130"/>
 
 # Glance
 
